@@ -1,11 +1,55 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+
+import { useState, useEffect } from 'react';
+import Sidebar from '../components/Sidebar';
+import ChatArea from '../components/ChatArea';
+import { Contact } from '../types';
+import { useIsMobile } from '../hooks/use-mobile';
 
 const Index = () => {
+  const [activeContact, setActiveContact] = useState<Contact | null>(null);
+  const [showChat, setShowChat] = useState(false);
+  const isMobile = useIsMobile();
+
+  useEffect(() => {
+    if (!isMobile) {
+      setShowChat(false);
+    }
+  }, [isMobile]);
+
+  const handleSelectContact = (contact: Contact) => {
+    setActiveContact(contact);
+    if (isMobile) {
+      setShowChat(true);
+    }
+  };
+
+  const handleBack = () => {
+    setShowChat(false);
+  };
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">Welcome to Your Blank App</h1>
-        <p className="text-xl text-gray-600">Start building your amazing project here!</p>
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+      <div className="w-full max-w-6xl h-[calc(100vh-2rem)] bg-white shadow-xl rounded-lg overflow-hidden flex">
+        {/* Sidebar - show on desktop or when chat is not shown on mobile */}
+        {(!isMobile || !showChat) && (
+          <div className={`${isMobile ? 'w-full' : 'w-1/3'} h-full`}>
+            <Sidebar
+              activeContact={activeContact}
+              onSelectContact={handleSelectContact}
+            />
+          </div>
+        )}
+        
+        {/* Chat Area - show on desktop or when chat is shown on mobile */}
+        {(!isMobile || showChat) && (
+          <div className={`${isMobile ? 'w-full' : 'w-2/3'} h-full chat-transition`}>
+            <ChatArea
+              contact={activeContact}
+              onBack={handleBack}
+              isMobile={isMobile}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
