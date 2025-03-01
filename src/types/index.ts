@@ -19,3 +19,10 @@ export interface Message {
   status?: 'sent' | 'delivered' | 'read';
   media?: string;
 }
+
+export interface AnalyticsData {
+  totalMessages: number;
+  totalContacts: number;
+  messagesByHour: { hour: number; count: number }[];
+  messagesByDay: { day: string; count: number }[];
+}
