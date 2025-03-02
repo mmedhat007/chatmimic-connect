@@ -1,20 +1,34 @@
-
 import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, Legend
+} from 'recharts';
 import { getAnalyticsData } from '../services/firebase';
-import { AnalyticsData } from '../types';
 import NavSidebar from '../components/NavSidebar';
 import { useIsMobile } from '../hooks/use-mobile';
+import { AnalyticsData } from '../types';
+
+type TimeInterval = 'today' | 'week' | 'month' | 'all';
 
 const Analytics = () => {
-  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [timeInterval, setTimeInterval] = useState<TimeInterval>('today');
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData>({
+    totalMessages: 0,
+    totalContacts: 0,
+    messagesByHour: Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 })),
+    messagesByDay: {
+      'Sunday': 0, 'Monday': 0, 'Tuesday': 0, 'Wednesday': 0,
+      'Thursday': 0, 'Friday': 0, 'Saturday': 0
+    }
+  });
   const isMobile = useIsMobile();
 
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true);
       try {
-        const data = await getAnalyticsData();
+        const data = await getAnalyticsData(timeInterval);
         setAnalyticsData(data);
       } catch (error) {
         console.error('Error fetching analytics data:', error);
@@ -24,20 +38,18 @@ const Analytics = () => {
     };
 
     fetchData();
-  }, []);
+  }, [timeInterval]);
+
+  // Transform messagesByDay data for the line chart
+  const messagesByDayData = Object.entries(analyticsData.messagesByDay).map(([day, count]) => ({
+    day,
+    count
+  }));
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-green-500"></div>
-      </div>
-    );
-  }
-
-  if (!analyticsData) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-xl text-gray-600">Failed to load analytics data</div>
+      <div className="h-screen w-screen bg-gray-100 flex items-center justify-center">
+        <div className="text-xl text-gray-600">Loading analytics...</div>
       </div>
     );
   }
@@ -46,56 +58,100 @@ const Analytics = () => {
     <div className="min-h-screen bg-gray-100 flex">
       {!isMobile && <NavSidebar />}
       <div className="flex-1 p-6">
-        <h1 className="text-2xl font-bold mb-6 text-gray-800">WhatsApp Analytics</h1>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-lg font-semibold mb-2 text-gray-700">Total Contacts</h2>
-            <p className="text-3xl font-bold text-whatsapp-teal-green">{analyticsData.totalContacts}</p>
-          </div>
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">Chat Analytics</h1>
           
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-lg font-semibold mb-2 text-gray-700">Total Messages</h2>
-            <p className="text-3xl font-bold text-whatsapp-teal-green">{analyticsData.totalMessages}</p>
+          {/* Time Interval Selector */}
+          <div className="flex space-x-2">
+            {(['today', 'week', 'month', 'all'] as TimeInterval[]).map((interval) => (
+              <button
+                key={interval}
+                onClick={() => setTimeInterval(interval)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  timeInterval === interval
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {interval === 'today' ? 'Today' :
+                 interval === 'week' ? 'Last 7 Days' :
+                 interval === 'month' ? 'Last 30 Days' : 'All Time'}
+              </button>
+            ))}
           </div>
         </div>
-        
-        <div className="bg-white p-6 rounded-lg shadow-md mb-6">
-          <h2 className="text-lg font-semibold mb-4 text-gray-700">Messages by Hour</h2>
-          <div className="h-80">
+
+        {/* Overview Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Total Messages</h3>
+            <p className="text-3xl font-bold text-blue-600">{analyticsData.totalMessages}</p>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Total Contacts</h3>
+            <p className="text-3xl font-bold text-blue-600">{analyticsData.totalContacts}</p>
+          </div>
+        </div>
+
+        {/* Messages by Hour Chart */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Messages by Hour</h3>
+          <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={analyticsData.messagesByHour}
-                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-              >
+              <BarChart data={analyticsData.messagesByHour}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="hour" label={{ value: 'Hour of Day', position: 'insideBottom', offset: -5 }} />
-                <YAxis label={{ value: 'Messages', angle: -90, position: 'insideLeft' }} />
-                <Tooltip formatter={(value) => [`${value} messages`, 'Count']} />
-                <Legend />
-                <Bar dataKey="count" name="Messages" fill="#128C7E" />
+                <XAxis 
+                  dataKey="hour"
+                  tickFormatter={(hour) => `${hour}:00`}
+                />
+                <YAxis />
+                <Tooltip
+                  formatter={(value: number) => [value, 'Messages']}
+                  labelFormatter={(hour: number) => `${hour}:00`}
+                />
+                <Bar 
+                  dataKey="count"
+                  fill="#3B82F6"
+                  minPointSize={1}
+                  background={{ fill: '#f3f4f6' }}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
-        
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-lg font-semibold mb-4 text-gray-700">Messages by Day</h2>
-          <div className="h-80">
+
+        {/* Messages by Day Line Chart */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Messages by Day</h3>
+          <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={analyticsData.messagesByDay}
-                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-              >
+              <LineChart data={messagesByDayData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="day" />
                 <YAxis />
-                <Tooltip formatter={(value) => [`${value} messages`, 'Count']} />
+                <Tooltip />
                 <Legend />
-                <Bar dataKey="count" name="Messages" fill="#128C7E" />
-              </BarChart>
+                <Line 
+                  type="monotone"
+                  dataKey="count"
+                  name="Messages"
+                  stroke="#3B82F6"
+                  strokeWidth={2}
+                  dot={{ fill: '#3B82F6', r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
             </ResponsiveContainer>
           </div>
+        </div>
+
+        {/* DenoteAI Branding */}
+        <div className="mt-8 text-center">
+          <p className="text-gray-500 text-sm">
+            Powered by{' '}
+            <span className="font-semibold text-gray-700">DenoteAI</span>
+          </p>
         </div>
       </div>
     </div>

@@ -1,28 +1,19 @@
-
 export interface Contact {
-  id: string;
-  name: string;
-  avatar?: string;
-  lastMessage?: string;
-  lastMessageTime?: string;
-  unreadCount?: number;
-  status?: 'online' | 'offline';
-  phoneNumber?: string;
+  phoneNumber: string;
+  lastMessage: string;
+  lastTimestamp: number;
 }
 
 export interface Message {
   id: string;
-  contactId: string;
-  text: string;
-  timestamp: string;
-  sender: 'user' | 'contact';
-  status?: 'sent' | 'delivered' | 'read';
-  media?: string;
+  message: string;
+  timestamp: number;
+  sender: 'agent' | 'customer';
 }
 
 export interface AnalyticsData {
   totalMessages: number;
   totalContacts: number;
-  messagesByHour: { hour: number; count: number }[];
-  messagesByDay: { day: string; count: number }[];
+  messagesByHour: Array<{ hour: number; count: number }>;
+  messagesByDay: { [key: string]: number };
 }
