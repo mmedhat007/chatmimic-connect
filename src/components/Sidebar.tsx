@@ -1,81 +1,64 @@
-
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Contact } from '../types';
-import ContactItem from './ContactItem';
-import { Search, Users } from 'lucide-react';
-import { getContacts } from '../services/firebase';
+import { Search } from 'lucide-react';
+import { formatTimestamp } from '../services/firebase';
 
 interface SidebarProps {
+  contacts: Contact[];
   activeContact: Contact | null;
   onSelectContact: (contact: Contact) => void;
 }
 
-const Sidebar = ({ activeContact, onSelectContact }: SidebarProps) => {
-  const [contacts, setContacts] = useState<Contact[]>([]);
+const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchContacts = async () => {
-      try {
-        const contactsData = await getContacts();
-        setContacts(contactsData);
-      } catch (error) {
-        console.error('Error fetching contacts:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchContacts();
-  }, []);
-
-  const filteredContacts = contacts.filter(contact => 
-    contact.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredContacts = contacts.filter(contact =>
+    contact.phoneNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    contact.lastMessage.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
     <div className="h-full flex flex-col bg-white border-r">
-      {/* Header */}
-      <div className="py-4 px-3 bg-gray-50 border-b">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-xl font-semibold text-gray-800">WhatsApp</h1>
-          <button className="text-gray-600 hover:text-gray-900 transition-colors">
-            <Users size={20} />
-          </button>
-        </div>
+      {/* Search Bar */}
+      <div className="p-4 border-b">
         <div className="relative">
           <input
             type="text"
             placeholder="Search or start new chat"
+            className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full p-2 pl-10 bg-white rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-500 transition-all"
           />
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+          <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
         </div>
       </div>
 
       {/* Contacts List */}
       <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-green-500"></div>
+        {filteredContacts.map((contact) => (
+          <div
+            key={contact.phoneNumber}
+            className={`flex items-center p-4 cursor-pointer hover:bg-gray-100 ${
+              activeContact?.phoneNumber === contact.phoneNumber ? 'bg-gray-100' : ''
+            }`}
+            onClick={() => onSelectContact(contact)}
+          >
+            <div className="w-12 h-12 bg-gray-300 rounded-full flex items-center justify-center text-white text-lg">
+              {contact.phoneNumber[0]}
+            </div>
+            <div className="ml-4 flex-1">
+              <div className="flex justify-between items-center">
+                <span className="font-medium">{contact.phoneNumber}</span>
+                <span className="text-sm text-gray-500">
+                  {formatTimestamp(contact.lastTimestamp)}
+                </span>
+              </div>
+              <div className="text-sm text-gray-500 truncate">
+                {contact.lastMessage}
+              </div>
+            </div>
           </div>
-        ) : filteredContacts.length > 0 ? (
-          filteredContacts.map(contact => (
-            <ContactItem
-              key={contact.id}
-              contact={contact}
-              isActive={activeContact?.id === contact.id}
-              onClick={() => onSelectContact(contact)}
-            />
-          ))
-        ) : (
-          <div className="text-center py-8 text-gray-500">
-            {searchTerm ? "No contacts found" : "No contacts available"}
-          </div>
-        )}
+        ))}
       </div>
     </div>
   );
