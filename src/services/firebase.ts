@@ -26,12 +26,12 @@ import {
 import { Contact, Message, AnalyticsData } from '../types';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyB1hiZz9s4XADx1Q9R92pj52Rm7XwimXl4",
-  authDomain: "denoteai.firebaseapp.com",
-  projectId: "denoteai",
-  storageBucket: "denoteai.appspot.com",
-  messagingSenderId: "107310167146502582562",
-  appId: "1:717748658681:web:77ffa59605736e43301d28"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 // Initialize Firebase
