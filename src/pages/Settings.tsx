@@ -1,0 +1,563 @@
+import { useState, useEffect } from 'react';
+import GoogleSheetsButton from '../components/GoogleSheetsButton';
+import { getCurrentUser } from '../services/firebase';
+import { doc, setDoc, collection, addDoc, getDocs, getDoc, updateDoc, query, orderBy } from 'firebase/firestore';
+import { db } from '../services/firebase';
+import NavSidebar from '../components/NavSidebar';
+import JSZip from 'jszip';
+
+interface ChatFile {
+  file: File;
+  phoneNumber: string;
+  content?: string;
+}
+
+interface Contact {
+  phoneNumber: string;
+  tags: string[];
+}
+
+const Settings = () => {
+  const [isImporting, setIsImporting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<string>('');
+  const [exportProgress, setExportProgress] = useState<string>('');
+  const [selectedFiles, setSelectedFiles] = useState<ChatFile[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [newTag, setNewTag] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  // Fetch contacts on component mount
+  useEffect(() => {
+    const fetchContacts = async () => {
+      const userUID = getCurrentUser();
+      if (!userUID) return;
+
+      try {
+        const chatsRef = collection(db, 'Whatsapp_Data', userUID, 'chats');
+        const chatsSnapshot = await getDocs(chatsRef);
+        
+        const contactsData = chatsSnapshot.docs.map(doc => ({
+          phoneNumber: doc.id,
+          tags: doc.data().tags || []
+        }));
+        
+        setContacts(contactsData);
+      } catch (error) {
+        console.error('Error fetching contacts:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchContacts();
+  }, []);
+
+  const handleAddTag = async (phoneNumber: string, tag: string) => {
+    if (!tag.trim()) return;
+
+    const userUID = getCurrentUser();
+    if (!userUID) return;
+
+    try {
+      const chatRef = doc(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber);
+      const chatDoc = await getDoc(chatRef);
+      
+      if (chatDoc.exists()) {
+        const currentTags = chatDoc.data().tags || [];
+        if (!currentTags.includes(tag)) {
+          await updateDoc(chatRef, {
+            tags: [...currentTags, tag]
+          });
+          
+          setContacts(prevContacts => 
+            prevContacts.map(contact => 
+              contact.phoneNumber === phoneNumber
+                ? { ...contact, tags: [...contact.tags, tag] }
+                : contact
+            )
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Error adding tag:', error);
+    }
+  };
+
+  const handleRemoveTag = async (phoneNumber: string, tagToRemove: string) => {
+    const userUID = getCurrentUser();
+    if (!userUID) return;
+
+    try {
+      const chatRef = doc(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber);
+      const chatDoc = await getDoc(chatRef);
+      
+      if (chatDoc.exists()) {
+        const currentTags = chatDoc.data().tags || [];
+        await updateDoc(chatRef, {
+          tags: currentTags.filter(tag => tag !== tagToRemove)
+        });
+        
+        setContacts(prevContacts => 
+          prevContacts.map(contact => 
+            contact.phoneNumber === phoneNumber
+              ? { ...contact, tags: contact.tags.filter(tag => tag !== tagToRemove) }
+              : contact
+          )
+        );
+      }
+    } catch (error) {
+      console.error('Error removing tag:', error);
+    }
+  };
+
+  const extractPhoneNumber = (filename: string): string => {
+    const match = filename.match(/WhatsApp Chat with \+(\d+)/);
+    return match ? match[1] : '';
+  };
+
+  const processTextFile = async (file: File): Promise<ChatFile | null> => {
+    try {
+      const text = await file.text();
+      return {
+        file,
+        phoneNumber: extractPhoneNumber(file.name),
+        content: text
+      };
+    } catch (error) {
+      console.error('Error processing text file:', error);
+      return null;
+    }
+  };
+
+  const processZipFile = async (file: File): Promise<ChatFile[]> => {
+    try {
+      const zip = new JSZip();
+      const zipContent = await zip.loadAsync(file);
+      const chatFiles: ChatFile[] = [];
+
+      for (const [filename, content] of Object.entries(zipContent.files)) {
+        if (filename.endsWith('.txt')) {
+          const text = await content.async('text');
+          chatFiles.push({
+            file: new File([text], filename, { type: 'text/plain' }),
+            phoneNumber: extractPhoneNumber(filename),
+            content: text
+          });
+        }
+      }
+
+      return chatFiles;
+    } catch (error) {
+      console.error('Error processing zip file:', error);
+      return [];
+    }
+  };
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    setImportProgress('Processing files...');
+    const processedFiles: ChatFile[] = [];
+
+    for (const file of Array.from(files)) {
+      if (file.type === 'application/zip' || file.name.endsWith('.zip')) {
+        const zipFiles = await processZipFile(file);
+        processedFiles.push(...zipFiles);
+      } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+        const processedFile = await processTextFile(file);
+        if (processedFile) {
+          processedFiles.push(processedFile);
+        }
+      }
+    }
+
+    setSelectedFiles(processedFiles);
+    setImportProgress(`Selected ${processedFiles.length} file(s) for import`);
+  };
+
+  const parseWhatsAppTimestamp = (timestamp: string): Date => {
+    // Convert WhatsApp format (DD/MM/YYYY, HH:mm am/pm) to Date
+    const [datePart, timePart] = timestamp.split(', ');
+    const [day, month, year] = datePart.split('/');
+    const [time, period] = timePart.split(' ');
+    const [hours, minutes] = time.split(':');
+    let hour = parseInt(hours);
+    
+    // Convert to 24-hour format
+    if (period.toLowerCase() === 'pm' && hour !== 12) {
+      hour += 12;
+    } else if (period.toLowerCase() === 'am' && hour === 12) {
+      hour = 0;
+    }
+
+    return new Date(
+      parseInt(year),
+      parseInt(month) - 1, // Months are 0-based in JavaScript
+      parseInt(day),
+      hour,
+      parseInt(minutes)
+    );
+  };
+
+  const handleImport = async () => {
+    if (selectedFiles.length === 0) return;
+
+    setIsImporting(true);
+    setImportProgress('Starting import...');
+
+    const userUID = getCurrentUser();
+    if (!userUID) {
+      setImportProgress('Error: User not found');
+      setIsImporting(false);
+      return;
+    }
+
+    try {
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const { file, phoneNumber, content } = selectedFiles[i];
+        setImportProgress(`Processing file ${i + 1} of ${selectedFiles.length}: ${file.name}`);
+
+        if (!content) {
+          setImportProgress(`Error: No content found in file ${i + 1}: ${file.name}`);
+          continue;
+        }
+
+        const lines = content.split('\n');
+        const messages = [];
+        let currentDate = '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          // Match the WhatsApp message format
+          const match = line.match(/(\d{2}\/\d{2}\/\d{4}, \d{1,2}:\d{2} [ap]m) - ([^:]+): (.+)/);
+          if (!match) continue;
+
+          const [, timestamp, sender, content] = match;
+          const isOutgoing = sender.toLowerCase() === 'you';
+
+          // If this is a new date, update currentDate
+          const date = timestamp.split(',')[0];
+          if (date !== currentDate) {
+            currentDate = date;
+          }
+
+          try {
+            const parsedTimestamp = parseWhatsAppTimestamp(timestamp);
+            messages.push({
+              timestamp: parsedTimestamp,
+              sender: isOutgoing ? 'user' : 'agent',
+              message: content,
+              date: currentDate
+            });
+          } catch (error) {
+            console.error('Error parsing timestamp:', timestamp, error);
+            continue;
+          }
+        }
+
+        if (messages.length > 0) {
+          // Create or update chat document using phone number as ID
+          const chatRef = doc(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber);
+          
+          // Get existing chat data to preserve tags and settings
+          const existingChat = await getDoc(chatRef);
+          const existingData = existingChat.exists() ? existingChat.data() : {};
+          
+          await setDoc(chatRef, {
+            phoneNumber,
+            lastMessage: messages[messages.length - 1].message,
+            lastMessageTime: messages[messages.length - 1].timestamp,
+            createdAt: existingData.createdAt || new Date(),
+            tags: existingData.tags || [],
+            agentStatus: existingData.agentStatus || 'on', // Default to on for new chats
+            humanAgent: existingData.humanAgent || false,
+            status: existingData.status || 'open' // Default to open for new chats
+          }, { merge: true });
+
+          // Add messages
+          const messagesRef = collection(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber, 'messages');
+          for (const msg of messages) {
+            await addDoc(messagesRef, {
+              timestamp: msg.timestamp,
+              sender: msg.sender === 'customer' ? 'user' : 'agent', // Update sender values
+              message: msg.message,
+              date: msg.date
+            });
+          }
+
+          setImportProgress(`Completed file ${i + 1} of ${selectedFiles.length}: ${file.name}`);
+        } else {
+          setImportProgress(`No messages found in file ${i + 1}: ${file.name}`);
+        }
+      }
+
+      setImportProgress('Import completed successfully!');
+      setSelectedFiles([]); // Clear selected files after successful import
+    } catch (error) {
+      console.error('Error importing WhatsApp backup:', error);
+      setImportProgress('Error importing backup: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    setExportProgress('Starting export...');
+
+    const userUID = getCurrentUser();
+    if (!userUID) {
+      setExportProgress('Error: User not found');
+      setIsExporting(false);
+      return;
+    }
+
+    try {
+      const zip = new JSZip();
+      setExportProgress('Fetching contacts...');
+
+      // Get all chats
+      const chatsRef = collection(db, 'Whatsapp_Data', userUID, 'chats');
+      const chatsSnapshot = await getDocs(chatsRef);
+      
+      for (const chatDoc of chatsSnapshot.docs) {
+        const chatData = chatDoc.data();
+        const phoneNumber = chatDoc.id;
+        setExportProgress(`Processing chat with ${phoneNumber}...`);
+
+        // Create a text file for this chat
+        let chatContent = `WhatsApp Chat with +${phoneNumber}\n\n`;
+
+        // Get all messages for this chat
+        const messagesRef = collection(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber, 'messages');
+        const messagesQuery = query(messagesRef, orderBy('timestamp', 'asc'));
+        const messagesSnapshot = await getDocs(messagesQuery);
+        
+        // Sort messages by timestamp
+        const messages = messagesSnapshot.docs
+          .map(doc => {
+            const data = doc.data();
+            let timestamp;
+            
+            // Handle Firestore timestamp
+            if (data.timestamp?.seconds) {
+              timestamp = new Date(data.timestamp.seconds * 1000);
+            } else if (data.timestamp instanceof Date) {
+              timestamp = data.timestamp;
+            } else {
+              timestamp = new Date(data.timestamp);
+            }
+
+            return {
+              timestamp,
+              sender: data.sender,
+              message: data.message,
+              date: data.date
+            };
+          })
+          .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+        // Format messages in WhatsApp style
+        let currentDate = '';
+        for (const msg of messages) {
+          const date = msg.date;
+          if (date !== currentDate) {
+            currentDate = date;
+            chatContent += `\n${date}\n`;
+          }
+
+          const time = msg.timestamp.toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: true 
+          }).toLowerCase();
+
+          const sender = msg.sender === 'user' ? 'You' : msg.sender === 'human' ? 'Human Agent' : 'AI Agent';
+          chatContent += `${time} - ${sender}: ${msg.message}\n`;
+        }
+
+        // Add the chat file to the zip
+        zip.file(`WhatsApp Chat with +${phoneNumber}.txt`, chatContent);
+      }
+
+      setExportProgress('Generating zip file...');
+      
+      // Generate and download the zip file
+      const zipContent = await zip.generateAsync({ type: 'blob' });
+      const url = window.URL.createObjectURL(zipContent);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'whatsapp_chats_backup.zip';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      setExportProgress('Export completed successfully!');
+    } catch (error) {
+      console.error('Error exporting WhatsApp backup:', error);
+      setExportProgress('Error exporting backup: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  return (
+    <div className="flex h-screen">
+      <NavSidebar />
+      <div className="flex-1 overflow-auto ml-20">
+        <div className="p-6">
+          <h1 className="text-2xl font-semibold mb-6">Settings</h1>
+          
+          <div className="space-y-8">
+            {/* Google Sheets Section */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-medium mb-4">Google Sheets Integration</h2>
+              <GoogleSheetsButton />
+            </div>
+
+            {/* Contact Tags Section */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-medium mb-4">Contact Tags</h2>
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600">
+                  Manage tags for your contacts to help organize and filter conversations.
+                </p>
+                
+                {loading ? (
+                  <div className="text-sm text-gray-600">Loading contacts...</div>
+                ) : (
+                  <div className="space-y-4">
+                    {contacts.map(contact => (
+                      <div key={contact.phoneNumber} className="border-b pb-4 last:border-b-0">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-medium">+{contact.phoneNumber}</span>
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="text"
+                              value={newTag}
+                              onChange={(e) => setNewTag(e.target.value)}
+                              placeholder="Add tag..."
+                              className="px-2 py-1 text-sm border rounded"
+                              onKeyPress={(e) => {
+                                if (e.key === 'Enter') {
+                                  handleAddTag(contact.phoneNumber, newTag);
+                                  setNewTag('');
+                                }
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                handleAddTag(contact.phoneNumber, newTag);
+                                setNewTag('');
+                              }}
+                              className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {contact.tags.map(tag => (
+                            <span
+                              key={tag}
+                              className="inline-flex items-center px-2 py-1 text-sm bg-gray-100 rounded-full"
+                            >
+                              {tag}
+                              <button
+                                onClick={() => handleRemoveTag(contact.phoneNumber, tag)}
+                                className="ml-1 text-gray-500 hover:text-gray-700"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* WhatsApp Backup Import Section */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-medium mb-4">Import WhatsApp Backup</h2>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-4">
+                  <input
+                    type="file"
+                    accept=".txt,.zip"
+                    multiple
+                    onChange={handleFileSelect}
+                    disabled={isImporting}
+                    className="block w-full text-sm text-gray-500
+                      file:mr-4 file:py-2 file:px-4
+                      file:rounded-full file:border-0
+                      file:text-sm file:font-semibold
+                      file:bg-blue-50 file:text-blue-700
+                      hover:file:bg-blue-100
+                      disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+                {selectedFiles.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-sm text-gray-600">
+                      Selected files:
+                    </div>
+                    <ul className="list-disc list-inside text-sm text-gray-600">
+                      {selectedFiles.map((file, index) => (
+                        <li key={index}>
+                          {file.file.name} (Phone: {file.phoneNumber || 'Not found'})
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      onClick={handleImport}
+                      disabled={isImporting}
+                      className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isImporting ? 'Importing...' : 'Import Selected Files'}
+                    </button>
+                  </div>
+                )}
+                {importProgress && (
+                  <div className="text-sm text-gray-600">
+                    {importProgress}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* WhatsApp Backup Export Section */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-medium mb-4">Export WhatsApp Backup</h2>
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600">
+                  Export all your WhatsApp chats to a zip file containing individual chat files.
+                </p>
+                <button
+                  onClick={handleExport}
+                  disabled={isExporting}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isExporting ? 'Exporting...' : 'Export All Chats'}
+                </button>
+                {exportProgress && (
+                  <div className="text-sm text-gray-600">
+                    {exportProgress}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Settings; 

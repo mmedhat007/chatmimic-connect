@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { MessageSquare, BarChart, Menu, LogOut } from 'lucide-react';
+import { MessageSquare, BarChart, Menu, LogOut, Bot, Settings, Users } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser } from '../services/firebase';
 
 const NavSidebar = () => {
-  const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -17,58 +16,56 @@ const NavSidebar = () => {
     }
   };
 
+  const navItems = [
+    { icon: MessageSquare, text: 'Chats', path: '/' },
+    { icon: Users, text: 'Contacts', path: '/contacts' },
+    { icon: BarChart, text: 'Analytics', path: '/analytics' },
+    { icon: Bot, text: 'Assistant', path: '/chatbot' },
+    { icon: Settings, text: 'Settings', path: '/settings' },
+  ];
+
   return (
-    <div className={`bg-whatsapp-teal-green-dark text-white h-screen flex flex-col ${collapsed ? 'w-16' : 'w-20'}`}>
-      {/* Toggle button */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="p-4 hover:bg-whatsapp-teal-green text-center"
-      >
-        <Menu size={24} />
-      </button>
-      
+    <div className="bg-[#09659c] text-white h-screen w-16 flex flex-col fixed">
       {/* Navigation items */}
-      <div className="flex flex-col items-center pt-6 gap-8">
-        <Link 
-          to="/"
-          className={`p-3 rounded-lg transition-colors ${
-            location.pathname === '/' 
-              ? 'bg-whatsapp-teal-green' 
-              : 'hover:bg-whatsapp-teal-green'
-          }`}
-        >
-          <MessageSquare size={24} />
-          {!collapsed && (
-            <span className="text-xs mt-1 block">Chats</span>
-          )}
-        </Link>
-        
-        <Link 
-          to="/analytics"
-          className={`p-3 rounded-lg transition-colors ${
-            location.pathname === '/analytics' 
-              ? 'bg-whatsapp-teal-green' 
-              : 'hover:bg-whatsapp-teal-green'
-          }`}
-        >
-          <BarChart size={24} />
-          {!collapsed && (
-            <span className="text-xs mt-1 block">Analytics</span>
-          )}
-        </Link>
+      <div className="flex flex-col items-center pt-6 gap-6">
+        {navItems.slice(0, -1).map((item) => (
+          <Link
+            key={item.path}
+            to={item.path}
+            className={`p-3 rounded-lg transition-colors mx-2 flex justify-center ${
+              location.pathname === item.path
+                ? 'bg-[#074e79]'
+                : 'hover:bg-[#074e79]'
+            }`}
+            title={item.text}
+          >
+            <item.icon size={24} />
+          </Link>
+        ))}
       </div>
 
-      {/* Logout button */}
-      <button
-        onClick={handleLogout}
-        className="p-4 hover:bg-whatsapp-teal-green text-center mt-auto"
-        title="Logout"
-      >
-        <LogOut size={24} />
-        {!collapsed && (
-          <span className="text-xs mt-1 block">Logout</span>
-        )}
-      </button>
+      {/* Bottom section with Settings and Logout */}
+      <div className="mt-auto flex flex-col items-center gap-4 pb-4">
+        <Link
+          to="/settings"
+          className={`p-3 rounded-lg transition-colors mx-2 flex justify-center ${
+            location.pathname === '/settings'
+              ? 'bg-[#074e79]'
+              : 'hover:bg-[#074e79]'
+          }`}
+          title="Settings"
+        >
+          <Settings size={24} />
+        </Link>
+
+        <button
+          onClick={handleLogout}
+          className="p-3 rounded-lg hover:bg-[#074e79] transition-colors mx-2 flex justify-center"
+          title="Logout"
+        >
+          <LogOut size={24} />
+        </button>
+      </div>
     </div>
   );
 };

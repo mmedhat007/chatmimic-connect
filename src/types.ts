@@ -1,0 +1,25 @@
+export interface Contact {
+  phoneNumber: string;
+  contactName?: string;
+  lastMessage: string;
+  lastTimestamp: number;
+  tags?: string[];
+  agentStatus?: 'on' | 'off';
+  humanAgent?: boolean;
+  status?: 'open' | 'closed';
+}
+
+export interface Message {
+  id: string;
+  message: string;
+  timestamp: number;
+  sender: 'agent' | 'human' | 'user';
+  date?: string;
+}
+
+export interface AnalyticsData {
+  totalMessages: number;
+  totalContacts: number;
+  messagesByHour: { hour: number; count: number }[];
+  messagesByDay: { [key: string]: number };
+} 

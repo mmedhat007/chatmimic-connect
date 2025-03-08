@@ -95,14 +95,19 @@ export const getContacts = async (): Promise<Contact[]> => {
       let lastTimestamp = Date.now();
       
       // Handle Firestore timestamp
-      if (data.lastTimestamp?.seconds) {
-        lastTimestamp = data.lastTimestamp.seconds * 1000;
+      if (data.lastMessageTime?.seconds) {
+        lastTimestamp = data.lastMessageTime.seconds * 1000;
       }
       
       contacts.push({
         phoneNumber: doc.id,
+        contactName: data.contactName,
         lastMessage: data.lastMessage || '',
-        lastTimestamp
+        lastTimestamp,
+        tags: data.tags || [],  // Include tags in the contact data
+        agentStatus: data.agentStatus || 'off',
+        humanAgent: data.humanAgent || false,
+        status: data.status || 'open' // Default to open if no status is set
       });
     }
     
@@ -140,11 +145,18 @@ export const getMessages = (phoneNumber: string, onUpdate: (messages: Message[])
           timestamp = data.timestamp.seconds * 1000;
         }
 
+        // Map old sender values to new ones if necessary
+        let sender = data.sender;
+        if (sender === 'customer') {
+          sender = 'user';
+        }
+
         return {
           id: doc.id,
           message: data.message || '',
           timestamp,
-          sender: data.sender || 'customer'
+          sender: sender as 'agent' | 'human' | 'user',
+          date: data.date
         };
       });
       
@@ -204,6 +216,7 @@ export const getContact = async (phoneNumber: string): Promise<Contact | null> =
 
       return {
         phoneNumber: contactSnap.id,
+        contactName: data.contactName,
         lastMessage: data.lastMessage || '',
         lastTimestamp
       };

@@ -14,7 +14,7 @@ const Login = () => {
 
     try {
       await loginUser(email, password);
-      navigate('/');
+      navigate('/platform-select');
     } catch (error: any) {
       setError(error.message || 'An error occurred');
     }
@@ -24,7 +24,7 @@ const Login = () => {
     <div className="h-screen w-screen bg-gray-100 flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-lg shadow-lg overflow-hidden">
         {/* Header */}
-        <div className="bg-whatsapp-teal-green-dark px-6 py-8 text-center">
+        <div className="bg-[#09659c] px-6 py-8 text-center">
           <h2 className="text-3xl font-bold text-white">Welcome Back</h2>
           <p className="mt-2 text-gray-100">
             Sign in to your account to continue
@@ -52,7 +52,7 @@ const Login = () => {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-whatsapp-teal-green focus:border-whatsapp-teal-green transition-colors"
+                  className="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#09659c] focus:border-[#09659c] transition-colors"
                   placeholder="Enter your email"
                 />
               </div>
@@ -68,7 +68,7 @@ const Login = () => {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-whatsapp-teal-green focus:border-whatsapp-teal-green transition-colors"
+                  className="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#09659c] focus:border-[#09659c] transition-colors"
                   placeholder="Enter your password"
                 />
               </div>
@@ -76,7 +76,7 @@ const Login = () => {
 
             <button
               type="submit"
-              className="w-full py-3 px-4 bg-whatsapp-teal-green text-white font-medium rounded-lg hover:bg-whatsapp-teal-green-dark focus:outline-none focus:ring-2 focus:ring-whatsapp-teal-green focus:ring-offset-2 transition-colors"
+              className="w-full bg-[#09659c] text-white py-2 px-4 rounded-lg hover:bg-[#074e79] transition-colors focus:outline-none focus:ring-2 focus:ring-[#09659c] focus:ring-offset-2"
             >
               Sign In
             </button>
