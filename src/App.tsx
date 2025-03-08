@@ -3,7 +3,13 @@ import { getCurrentUser } from './services/firebase';
 import Index from './pages/Index';
 import Login from './pages/Login';
 import Analytics from './pages/Analytics';
+import Settings from './pages/Settings';
 import NotFound from './pages/NotFound';
+import GoogleCallback from './pages/GoogleCallback';
+import ChatBotPage from './pages/ChatBotPage';
+import Contacts from './pages/Contacts';
+import PlatformSelect from './pages/PlatformSelect';
+import ComingSoon from './pages/ComingSoon';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -25,6 +31,22 @@ const App = () => {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route
+          path="/platform-select"
+          element={
+            <ProtectedRoute>
+              <PlatformSelect />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/coming-soon"
+          element={
+            <ProtectedRoute>
+              <ComingSoon />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/"
           element={
             <ProtectedRoute>
@@ -37,6 +59,38 @@ const App = () => {
           element={
             <ProtectedRoute>
               <Analytics />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <Settings />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/contacts"
+          element={
+            <ProtectedRoute>
+              <Contacts />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/chatbot"
+          element={
+            <ProtectedRoute>
+              <ChatBotPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/google-callback"
+          element={
+            <ProtectedRoute>
+              <GoogleCallback />
             </ProtectedRoute>
           }
         />

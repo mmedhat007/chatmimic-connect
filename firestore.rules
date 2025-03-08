@@ -2,58 +2,57 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper function to check if user is authenticated
+    // Helper function to check if the user is authenticated
     function isAuthenticated() {
       return request.auth != null;
     }
-
-    // Helper function to check if user is accessing their own data
+    
+    // Helper function to check if the user is accessing their own data
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return request.auth.uid == userId;
     }
-
-    // Helper function to validate workflow fields
-    function hasValidWorkflowFields(workflow) {
-      return workflow.limit is number 
-        && workflow.executions_used is number 
-        && workflow.reset_date is string;
+    
+    // Helper function to check if the user is an admin
+    function isAdmin() {
+      return request.auth.uid == "0ThUjgEGmeTyM9jaUcMgreDJKNa2";
     }
-
-    // Rules for Users collection
+    
+    // Users collection rules
     match /Users/{userId} {
-      // Allow read/write only if the authenticated user's UID matches the document ID
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      // Allow read and write if user is admin or accessing their own document
+      allow read, write: if isAuthenticated() && (isOwner(userId) || isAdmin());
       
-      // No need to specify nested rules for maps (workflows) since they're part of the document
+      // Allow access to workflows subcollection
+      match /workflows/{workflowId} {
+        allow read, write: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      }
     }
-
-    // Rules for Whatsapp_Data collection
+    
+    // Allow admin to list all users
+    match /Users/{userId} {
+      allow list: if isAuthenticated() && isAdmin();
+    }
+    
+    // Whatsapp_Data collection rules
     match /Whatsapp_Data/{userId} {
-      // Allow read/write only if the authenticated user's UID matches the document ID
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      // Allow read and write if user is admin or accessing their own document
+      allow read, write: if isAuthenticated() && (isOwner(userId) || isAdmin());
       
-      // Rules for nested chats collection
+      // Chats subcollection
       match /chats/{phoneNumber} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isAuthenticated() && (isOwner(userId) || isAdmin());
         
-        // Rules for nested messages collection
+        // Messages subcollection
         match /messages/{messageId} {
-          allow read, write: if request.auth != null && request.auth.uid == userId;
+          allow read, write: if isAuthenticated() && (isOwner(userId) || isAdmin());
         }
       }
     }
-
-    // For the messages index (collection group query)
-    match /{path=**}/messages/{messageId} {
-      // Allow reading messages if they are under the user's Whatsapp_Data path
-      allow read: if request.auth != null && 
-                    path[0] == 'Whatsapp_Data' && 
-                    path[1] == request.auth.uid;
-    }
-
-    // Deny access to all other paths by default
-    match /{document=**} {
-      allow read, write: if false;
+    
+    // Collection group query rule for messages
+    match /{document=**}/messages/{messageId} {
+      // This allows collection group queries on the messages collection
+      allow read: if isAuthenticated();
     }
   }
 } 
