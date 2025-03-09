@@ -3,18 +3,28 @@ import { Contact } from '../types';
 import { getContacts } from '../services/firebase';
 import NavSidebar from '../components/NavSidebar';
 import { formatTimestamp } from '../services/firebase';
-import { Search } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 
 const Contacts = () => {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
 
   useEffect(() => {
     const fetchContacts = async () => {
       try {
         const fetchedContacts = await getContacts();
         setContacts(fetchedContacts);
+        
+        // Extract unique tags from all contacts
+        const tags = new Set<string>();
+        fetchedContacts.forEach(contact => {
+          contact.tags?.forEach(tag => tags.add(tag));
+        });
+        setAvailableTags(Array.from(tags));
       } catch (error) {
         console.error('Error fetching contacts:', error);
       } finally {
@@ -25,27 +35,108 @@ const Contacts = () => {
     fetchContacts();
   }, []);
 
-  const filteredContacts = contacts.filter(contact =>
-    (contact.contactName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-    contact.phoneNumber.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredContacts = contacts.filter(contact => {
+    // Search filter
+    const searchMatch = (contact.contactName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      contact.phoneNumber.toLowerCase().includes(searchTerm.toLowerCase());
+
+    // Status filter
+    const statusMatch = selectedStatus === 'all' || contact.status === selectedStatus;
+
+    // Tags filter
+    const tagsMatch = selectedTags.length === 0 || 
+      selectedTags.every(tag => contact.tags?.includes(tag));
+
+    return searchMatch && statusMatch && tagsMatch;
+  });
+
+  const handleTagSelect = (tag: string) => {
+    setSelectedTags(prev => 
+      prev.includes(tag) 
+        ? prev.filter(t => t !== tag)
+        : [...prev, tag]
+    );
+  };
+
+  const handleStatusSelect = (status: string) => {
+    setSelectedStatus(status);
+  };
 
   return (
     <div className="flex h-screen">
       <NavSidebar />
       <div className="flex-1 overflow-auto ml-20">
         <div className="p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-semibold text-gray-800">Contacts</h1>
-            <div className="w-64 relative">
-              <input
-                type="text"
-                placeholder="Search contacts..."
-                className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#09659c]"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-              <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+          <div className="flex flex-col space-y-4 mb-6">
+            <div className="flex justify-between items-center">
+              <h1 className="text-2xl font-semibold text-gray-800">Contacts</h1>
+              <div className="w-64 relative">
+                <input
+                  type="text"
+                  placeholder="Search contacts..."
+                  className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#09659c]"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-4 items-center bg-white p-4 rounded-lg shadow-sm">
+              <div className="flex items-center space-x-2">
+                <span className="text-sm font-medium text-gray-700">Status:</span>
+                <div className="flex gap-2">
+                  {['all', 'open', 'closed'].map((status) => (
+                    <button
+                      key={status}
+                      onClick={() => handleStatusSelect(status)}
+                      className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
+                        selectedStatus === status
+                          ? 'bg-[#09659c] text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {status.charAt(0).toUpperCase() + status.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex-1">
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-700">Tags:</span>
+                  <div className="flex flex-wrap gap-2">
+                    {availableTags.map((tag) => (
+                      <button
+                        key={tag}
+                        onClick={() => handleTagSelect(tag)}
+                        className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
+                          selectedTags.includes(tag)
+                            ? 'bg-[#09659c] text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Clear filters */}
+              {(selectedStatus !== 'all' || selectedTags.length > 0) && (
+                <button
+                  onClick={() => {
+                    setSelectedStatus('all');
+                    setSelectedTags([]);
+                  }}
+                  className="flex items-center px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+                >
+                  <X className="w-4 h-4 mr-1" />
+                  Clear filters
+                </button>
+              )}
             </div>
           </div>
 
