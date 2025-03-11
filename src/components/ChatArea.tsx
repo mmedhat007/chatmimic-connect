@@ -3,7 +3,8 @@ import { Contact, Message } from '../types';
 import { ArrowLeft, Send } from 'lucide-react';
 import { formatTimestamp } from '../services/firebase';
 import AgentControls from './AgentControls';
-import { doc, collection, addDoc, getDoc, updateDoc } from 'firebase/firestore';
+import TagControls from './TagControls';
+import { doc, collection, addDoc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db, getCurrentUser } from '../services/firebase';
 
 interface ChatAreaProps {
@@ -18,12 +19,26 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
   const [newMessage, setNewMessage] = useState('');
   const [isHumanAgent, setIsHumanAgent] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [chatStatus, setChatStatus] = useState(contact?.status || 'open');
+  const [chatStatus, setChatStatus] = useState<string>('open');
 
-  // Update chat status when contact changes
+  // Set up real-time listener for chat status
   useEffect(() => {
-    setChatStatus(contact?.status || 'open');
-  }, [contact?.status]);
+    if (!contact) return;
+
+    const userUID = getCurrentUser();
+    if (!userUID) return;
+
+    const chatRef = doc(db, 'Whatsapp_Data', userUID, 'chats', contact.phoneNumber);
+    
+    const unsubscribe = onSnapshot(chatRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        setChatStatus(data.status || 'open');
+      }
+    });
+
+    return () => unsubscribe();
+  }, [contact]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -63,6 +78,7 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
 
     setIsLoading(true);
     try {
+      const timestamp = new Date();
       const messagesRef = collection(
         db,
         'Whatsapp_Data',
@@ -72,7 +88,6 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
         'messages'
       );
 
-      const timestamp = new Date();
       const messageData = {
         message: newMessage.trim(),
         timestamp,
@@ -83,12 +98,13 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
       // Add the new message
       await addDoc(messagesRef, messageData);
 
-      // Update the chat's last message
+      // Update the chat's last message and timestamp
       const chatRef = doc(db, 'Whatsapp_Data', userUID, 'chats', contact.phoneNumber);
       await updateDoc(chatRef, {
         lastMessage: newMessage.trim(),
         lastMessageTime: timestamp,
-        lastMessageSender: 'human'
+        lastMessageSender: 'human',
+        lastTimestamp: timestamp.getTime()
       });
 
       // Clear the input
@@ -113,7 +129,6 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
       await updateDoc(chatRef, {
         status: newStatus
       });
-      setChatStatus(newStatus);
     } catch (error) {
       console.error('Error updating chat status:', error);
     }
@@ -122,9 +137,12 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
   if (!contact) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50">
-        <div className="text-center text-gray-500">
-          <p className="text-xl">Select a contact to start chatting</p>
-        </div>
+        <img 
+          src="/original icon.png" 
+          alt="Chatmimic" 
+          className="w-[700px] opacity-10"
+          style={{ objectFit: 'contain' }}
+        />
       </div>
     );
   }
@@ -148,6 +166,7 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
             </div>
             <div className="ml-3 flex items-center gap-3">
               <div className="font-medium">{contact.phoneNumber}</div>
+              <TagControls phoneNumber={contact.phoneNumber} />
               <button
                 onClick={toggleChatStatus}
                 className={`px-2 py-0.5 text-xs rounded-full font-medium transition-colors ${
@@ -164,7 +183,7 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
           </div>
         </div>
         
-        {/* Agent Controls */}
+        {/* Controls Section */}
         <div className="mt-3">
           <AgentControls phoneNumber={contact.phoneNumber} />
         </div>

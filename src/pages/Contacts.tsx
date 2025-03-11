@@ -4,6 +4,7 @@ import { getContacts } from '../services/firebase';
 import NavSidebar from '../components/NavSidebar';
 import { formatTimestamp } from '../services/firebase';
 import { Search, Filter, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 interface FilterState {
   status: string[];
@@ -28,27 +29,22 @@ const Contacts = () => {
     }
   });
   const [availableTags, setAvailableTags] = useState<string[]>([]);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchContacts = async () => {
-      try {
-        const fetchedContacts = await getContacts();
-        setContacts(fetchedContacts);
-        
-        // Extract unique tags
-        const tags = new Set<string>();
-        fetchedContacts.forEach(contact => {
-          contact.tags?.forEach(tag => tags.add(tag));
-        });
-        setAvailableTags(Array.from(tags));
-      } catch (error) {
-        console.error('Error fetching contacts:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+    const unsubscribe = getContacts((fetchedContacts) => {
+      setContacts(fetchedContacts);
+      
+      // Extract unique tags for filtering only
+      const tags = new Set<string>();
+      fetchedContacts.forEach(contact => {
+        contact.tags?.forEach(tag => tags.add(tag));
+      });
+      setAvailableTags(Array.from(tags));
+      setLoading(false);
+    });
 
-    fetchContacts();
+    return () => unsubscribe();
   }, []);
 
   const toggleFilter = (type: 'status' | 'tags', value: string) => {
@@ -71,43 +67,45 @@ const Contacts = () => {
     });
   };
 
-  const filteredContacts = contacts.filter(contact => {
-    // Search term filter
-    const matchesSearch = 
-      (contact.contactName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-      contact.phoneNumber.toLowerCase().includes(searchTerm.toLowerCase());
+  const handleContactClick = (contact: Contact) => {
+    navigate('/', { state: { selectedContact: contact } });
+  };
 
-    // Status filter
-    const matchesStatus = 
-      filters.status.length === 0 || 
-      (contact.status && filters.status.includes(contact.status));
+  const filteredContacts = contacts
+    .sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+    .filter(contact => {
+      const matchesSearch = 
+        (contact.contactName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+        contact.phoneNumber.toLowerCase().includes(searchTerm.toLowerCase());
 
-    // Tags filter
-    const matchesTags = 
-      filters.tags.length === 0 ||
-      filters.tags.every(tag => contact.tags?.includes(tag));
+      const matchesStatus = 
+        filters.status.length === 0 || 
+        (contact.status && filters.status.includes(contact.status));
 
-    // Date range filter
-    const matchesDateRange = () => {
-      if (!filters.dateRange.start && !filters.dateRange.end) return true;
-      
-      const contactDate = new Date(contact.lastTimestamp);
-      const start = filters.dateRange.start ? new Date(filters.dateRange.start) : null;
-      const end = filters.dateRange.end ? new Date(filters.dateRange.end) : null;
-      
-      if (start && end) {
-        return contactDate >= start && contactDate <= end;
-      } else if (start) {
-        return contactDate >= start;
-      } else if (end) {
-        return contactDate <= end;
-      }
-      
-      return true;
-    };
+      const matchesTags = 
+        filters.tags.length === 0 ||
+        filters.tags.every(tag => contact.tags?.includes(tag));
 
-    return matchesSearch && matchesStatus && matchesTags && matchesDateRange();
-  });
+      const matchesDateRange = () => {
+        if (!filters.dateRange.start && !filters.dateRange.end) return true;
+        
+        const contactDate = new Date(contact.lastTimestamp);
+        const start = filters.dateRange.start ? new Date(filters.dateRange.start) : null;
+        const end = filters.dateRange.end ? new Date(filters.dateRange.end) : null;
+        
+        if (start && end) {
+          return contactDate >= start && contactDate <= end;
+        } else if (start) {
+          return contactDate >= start;
+        } else if (end) {
+          return contactDate <= end;
+        }
+        
+        return true;
+      };
+
+      return matchesSearch && matchesStatus && matchesTags && matchesDateRange();
+    });
 
   return (
     <div className="flex h-screen">
@@ -177,7 +175,7 @@ const Contacts = () => {
                   {/* Tags Filter */}
                   <div>
                     <label className="text-sm font-medium text-gray-700 block mb-2">
-                      Tags
+                      Filter by Tags
                     </label>
                     <div className="space-y-2">
                       {availableTags.map(tag => (
@@ -254,7 +252,11 @@ const Contacts = () => {
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {filteredContacts.map((contact) => (
-                      <tr key={contact.phoneNumber} className="hover:bg-gray-50">
+                      <tr 
+                        key={contact.phoneNumber} 
+                        className="hover:bg-gray-50 cursor-pointer transition-colors"
+                        onClick={() => handleContactClick(contact)}
+                      >
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
                             <div className="h-10 w-10 flex-shrink-0 bg-[#09659c] rounded-full flex items-center justify-center text-white">
@@ -294,7 +296,7 @@ const Contacts = () => {
                             {contact.tags?.map((tag) => (
                               <span
                                 key={tag}
-                                className="px-2 py-0.5 text-xs bg-[#e6f3f8] text-[#09659c] rounded-full"
+                                className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full"
                               >
                                 {tag}
                               </span>

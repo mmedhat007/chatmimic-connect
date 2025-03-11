@@ -25,7 +25,7 @@ const NavSidebar = () => {
   ];
 
   return (
-    <div className="bg-[#09659c] text-white h-screen w-16 flex flex-col fixed">
+    <div className="bg-chatmimic-blue text-white h-screen w-16 flex flex-col fixed">
       {/* Navigation items */}
       <div className="flex flex-col items-center pt-6 gap-6">
         {navItems.slice(0, -1).map((item) => (
@@ -34,8 +34,8 @@ const NavSidebar = () => {
             to={item.path}
             className={`p-3 rounded-lg transition-colors mx-2 flex justify-center ${
               location.pathname === item.path
-                ? 'bg-[#074e79]'
-                : 'hover:bg-[#074e79]'
+                ? 'bg-chatmimic-blue-dark'
+                : 'hover:bg-chatmimic-blue-dark'
             }`}
             title={item.text}
           >
@@ -50,8 +50,8 @@ const NavSidebar = () => {
           to="/settings"
           className={`p-3 rounded-lg transition-colors mx-2 flex justify-center ${
             location.pathname === '/settings'
-              ? 'bg-[#074e79]'
-              : 'hover:bg-[#074e79]'
+              ? 'bg-chatmimic-blue-dark'
+              : 'hover:bg-chatmimic-blue-dark'
           }`}
           title="Settings"
         >
@@ -60,7 +60,7 @@ const NavSidebar = () => {
 
         <button
           onClick={handleLogout}
-          className="p-3 rounded-lg hover:bg-[#074e79] transition-colors mx-2 flex justify-center"
+          className="p-3 rounded-lg hover:bg-chatmimic-blue-dark transition-colors mx-2 flex justify-center"
           title="Logout"
         >
           <LogOut size={24} />

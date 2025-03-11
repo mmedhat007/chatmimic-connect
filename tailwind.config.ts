@@ -1,4 +1,3 @@
-
 import type { Config } from "tailwindcss";
 
 export default {
@@ -20,14 +19,22 @@ export default {
 		},
 		extend: {
 			colors: {
+				chatmimic: {
+					blue: 'var(--chatmimic-blue)',
+					'blue-dark': 'var(--chatmimic-blue-dark)',
+					'blue-light': 'var(--chatmimic-blue-light)',
+					'blue-lighter': 'var(--chatmimic-blue-lighter)',
+				},
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',
-				background: 'hsl(var(--background))',
-				foreground: 'hsl(var(--foreground))',
+				background: 'var(--background)',
+				foreground: 'var(--foreground)',
 				primary: {
-					DEFAULT: 'hsl(var(--primary))',
-					foreground: 'hsl(var(--primary-foreground))'
+					DEFAULT: 'var(--primary)',
+					dark: 'var(--primary-dark)',
+					light: 'var(--primary-light)',
+					lighter: 'var(--primary-lighter)',
 				},
 				secondary: {
 					DEFAULT: 'hsl(var(--secondary))',
