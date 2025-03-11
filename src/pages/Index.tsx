@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import ChatArea from '../components/ChatArea';
 import NavSidebar from '../components/NavSidebar';
@@ -7,7 +7,6 @@ import GoogleSheetsButton from '../components/GoogleSheetsButton';
 import { Contact, Message } from '../types';
 import { useIsMobile } from '../hooks/use-mobile';
 import { getContacts, getMessages } from '../services/firebase';
-import ContactCard from '../components/ContactCard';
 
 const Index = () => {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -17,22 +16,33 @@ const Index = () => {
   const [loading, setLoading] = useState(true);
   const isMobile = useIsMobile();
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Fetch contacts on component mount
   useEffect(() => {
-    const fetchContacts = async () => {
-      try {
-        const fetchedContacts = await getContacts();
-        setContacts(fetchedContacts);
-      } catch (error) {
-        console.error('Error fetching contacts:', error);
-      } finally {
-        setLoading(false);
+    const unsubscribe = getContacts((fetchedContacts) => {
+      setContacts(fetchedContacts);
+      
+      // If there's a selected contact in the navigation state, set it as active
+      if (location.state?.selectedContact) {
+        const selectedContact = location.state.selectedContact;
+        const contact = fetchedContacts.find(c => c.phoneNumber === selectedContact.phoneNumber);
+        if (contact) {
+          setActiveContact(contact);
+          if (isMobile) {
+            setShowChat(true);
+          }
+        }
+        // Clear the navigation state
+        navigate('/', { replace: true });
       }
-    };
+      
+      setLoading(false);
+    });
 
-    fetchContacts();
-  }, []);
+    // Clean up listener when component unmounts
+    return () => unsubscribe();
+  }, [location.state, navigate, isMobile]);
 
   // Set up real-time messages listener when active contact changes
   useEffect(() => {

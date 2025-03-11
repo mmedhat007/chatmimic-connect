@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import GoogleSheetsButton from '../components/GoogleSheetsButton';
 import { getCurrentUser } from '../services/firebase';
-import { doc, setDoc, collection, addDoc, getDocs, getDoc, updateDoc, query, orderBy } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, getDocs, getDoc, updateDoc, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import NavSidebar from '../components/NavSidebar';
 import JSZip from 'jszip';
+import { getContacts } from '../services/firebase';
 
 interface ChatFile {
   file: File;
@@ -23,34 +24,11 @@ const Settings = () => {
   const [importProgress, setImportProgress] = useState<string>('');
   const [exportProgress, setExportProgress] = useState<string>('');
   const [selectedFiles, setSelectedFiles] = useState<ChatFile[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [newTag, setNewTag] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // Fetch contacts on component mount
+  // Remove contacts and tag management related code
   useEffect(() => {
-    const fetchContacts = async () => {
-      const userUID = getCurrentUser();
-      if (!userUID) return;
-
-      try {
-        const chatsRef = collection(db, 'Whatsapp_Data', userUID, 'chats');
-        const chatsSnapshot = await getDocs(chatsRef);
-        
-        const contactsData = chatsSnapshot.docs.map(doc => ({
-          phoneNumber: doc.id,
-          tags: doc.data().tags || []
-        }));
-        
-        setContacts(contactsData);
-      } catch (error) {
-        console.error('Error fetching contacts:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchContacts();
+    setLoading(false);
   }, []);
 
   const handleAddTag = async (phoneNumber: string, tag: string) => {
@@ -69,14 +47,6 @@ const Settings = () => {
           await updateDoc(chatRef, {
             tags: [...currentTags, tag]
           });
-          
-          setContacts(prevContacts => 
-            prevContacts.map(contact => 
-              contact.phoneNumber === phoneNumber
-                ? { ...contact, tags: [...contact.tags, tag] }
-                : contact
-            )
-          );
         }
       }
     } catch (error) {
@@ -97,14 +67,6 @@ const Settings = () => {
         await updateDoc(chatRef, {
           tags: currentTags.filter(tag => tag !== tagToRemove)
         });
-        
-        setContacts(prevContacts => 
-          prevContacts.map(contact => 
-            contact.phoneNumber === phoneNumber
-              ? { ...contact, tags: contact.tags.filter(tag => tag !== tagToRemove) }
-              : contact
-          )
-        );
       }
     } catch (error) {
       console.error('Error removing tag:', error);
@@ -177,28 +139,36 @@ const Settings = () => {
     setImportProgress(`Selected ${processedFiles.length} file(s) for import`);
   };
 
-  const parseWhatsAppTimestamp = (timestamp: string): Date => {
-    // Convert WhatsApp format (DD/MM/YYYY, HH:mm am/pm) to Date
-    const [datePart, timePart] = timestamp.split(', ');
-    const [day, month, year] = datePart.split('/');
+  const parseWhatsAppTimestamp = (fullTimestamp: string): Date => {
+    // Format: "DD/MM/YYYY, H:mm am/pm"
+    const [datePart, timePart] = fullTimestamp.split(', ');
+    const [day, month, year] = datePart.split('/').map(num => parseInt(num));
     const [time, period] = timePart.split(' ');
-    const [hours, minutes] = time.split(':');
-    let hour = parseInt(hours);
+    const [hours, minutes] = time.split(':').map(num => parseInt(num));
     
     // Convert to 24-hour format
+    let hour = hours;
     if (period.toLowerCase() === 'pm' && hour !== 12) {
       hour += 12;
     } else if (period.toLowerCase() === 'am' && hour === 12) {
       hour = 0;
     }
 
-    return new Date(
-      parseInt(year),
-      parseInt(month) - 1, // Months are 0-based in JavaScript
-      parseInt(day),
-      hour,
-      parseInt(minutes)
-    );
+    return new Date(year, month - 1, day, hour, minutes);
+  };
+
+  const formatWhatsAppTimestamp = (date: Date): string => {
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = date.getHours();
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    
+    // Convert to 12-hour format with am/pm
+    const period = hours >= 12 ? 'pm' : 'am';
+    const hour12 = hours % 12 || 12;
+    
+    return `${day}/${month}/${year}, ${hour12}:${minutes} ${period}`;
   };
 
   const handleImport = async () => {
@@ -224,33 +194,42 @@ const Settings = () => {
           continue;
         }
 
-        const lines = content.split('\n');
+        const lines = content.split('\n').filter(line => line.trim() && !line.includes('undefined'));
         const messages = [];
-        let currentDate = '';
+        let latestMessageTimestamp = 0;
 
         for (const line of lines) {
-          if (!line.trim()) continue;
+          // Skip header lines and empty lines
+          if (line.startsWith('WhatsApp Chat with') || !line.trim()) continue;
 
-          // Match the WhatsApp message format
-          const match = line.match(/(\d{2}\/\d{2}\/\d{4}, \d{1,2}:\d{2} [ap]m) - ([^:]+): (.+)/);
+          // Match the WhatsApp format: DD/MM/YYYY, H:mm am/pm - Sender: Message
+          const match = line.match(/^(\d{2}\/\d{2}\/\d{4}, \d{1,2}:\d{2} [ap]m) - ([^:]+): (.+)$/i);
           if (!match) continue;
 
-          const [, timestamp, sender, content] = match;
-          const isOutgoing = sender.toLowerCase() === 'you';
-
-          // If this is a new date, update currentDate
-          const date = timestamp.split(',')[0];
-          if (date !== currentDate) {
-            currentDate = date;
-          }
+          const [, timestamp, sender, messageContent] = match;
 
           try {
             const parsedTimestamp = parseWhatsAppTimestamp(timestamp);
+            const messageTimestamp = parsedTimestamp.getTime();
+            latestMessageTimestamp = Math.max(latestMessageTimestamp, messageTimestamp);
+            
+            // Determine the correct sender type
+            let senderType;
+            if (sender.toLowerCase().includes('ai agent')) {
+              senderType = 'agent';
+            } else if (sender.toLowerCase().includes('human agent')) {
+              senderType = 'human';
+            } else if (sender.toLowerCase() === 'you') {
+              senderType = 'user';
+            } else {
+              senderType = 'agent'; // Default to agent for other senders
+            }
+
             messages.push({
               timestamp: parsedTimestamp,
-              sender: isOutgoing ? 'user' : 'agent',
-              message: content,
-              date: currentDate
+              sender: senderType,
+              message: messageContent,
+              date: timestamp.split(',')[0]
             });
           } catch (error) {
             console.error('Error parsing timestamp:', timestamp, error);
@@ -266,36 +245,46 @@ const Settings = () => {
           const existingChat = await getDoc(chatRef);
           const existingData = existingChat.exists() ? existingChat.data() : {};
           
+          const lastMessage = messages[messages.length - 1];
+          
           await setDoc(chatRef, {
             phoneNumber,
-            lastMessage: messages[messages.length - 1].message,
-            lastMessageTime: messages[messages.length - 1].timestamp,
-            createdAt: existingData.createdAt || new Date(),
+            lastMessage: lastMessage.message,
+            lastMessageTime: lastMessage.timestamp,
+            lastTimestamp: latestMessageTimestamp,
+            createdAt: existingData.createdAt || messages[0].timestamp,
             tags: existingData.tags || [],
-            agentStatus: existingData.agentStatus || 'on', // Default to on for new chats
+            agentStatus: existingData.agentStatus || 'on',
             humanAgent: existingData.humanAgent || false,
-            status: existingData.status || 'open' // Default to open for new chats
+            status: existingData.status || 'open'
           }, { merge: true });
 
-          // Add messages
+          // Delete existing messages before importing new ones
           const messagesRef = collection(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber, 'messages');
-          for (const msg of messages) {
-            await addDoc(messagesRef, {
-              timestamp: msg.timestamp,
-              sender: msg.sender === 'customer' ? 'user' : 'agent', // Update sender values
-              message: msg.message,
-              date: msg.date
-            });
-          }
+          const existingMessages = await getDocs(messagesRef);
+          const deletePromises = existingMessages.docs.map(doc => deleteDoc(doc.ref));
+          await Promise.all(deletePromises);
 
-          setImportProgress(`Completed file ${i + 1} of ${selectedFiles.length}: ${file.name}`);
+          // Add new messages
+          const addPromises = messages.map(msg => addDoc(messagesRef, {
+            timestamp: msg.timestamp,
+            sender: msg.sender,
+            message: msg.message,
+            date: msg.date
+          }));
+          await Promise.all(addPromises);
+
+          setImportProgress(`Completed file ${i + 1} of ${selectedFiles.length}: ${file.name} (${messages.length} messages)`);
         } else {
           setImportProgress(`No messages found in file ${i + 1}: ${file.name}`);
         }
       }
 
       setImportProgress('Import completed successfully!');
-      setSelectedFiles([]); // Clear selected files after successful import
+      setSelectedFiles([]);
+      
+      // Force a refresh of the contacts list
+      window.location.reload();
     } catch (error) {
       console.error('Error importing WhatsApp backup:', error);
       setImportProgress('Error importing backup: ' + (error instanceof Error ? error.message : 'Unknown error'));
@@ -354,8 +343,7 @@ const Settings = () => {
             return {
               timestamp,
               sender: data.sender,
-              message: data.message,
-              date: data.date
+              message: data.message
             };
           })
           .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -363,20 +351,9 @@ const Settings = () => {
         // Format messages in WhatsApp style
         let currentDate = '';
         for (const msg of messages) {
-          const date = msg.date;
-          if (date !== currentDate) {
-            currentDate = date;
-            chatContent += `\n${date}\n`;
-          }
-
-          const time = msg.timestamp.toLocaleTimeString([], { 
-            hour: '2-digit', 
-            minute: '2-digit',
-            hour12: true 
-          }).toLowerCase();
-
+          const formattedTimestamp = formatWhatsAppTimestamp(msg.timestamp);
           const sender = msg.sender === 'user' ? 'You' : msg.sender === 'human' ? 'Human Agent' : 'AI Agent';
-          chatContent += `${time} - ${sender}: ${msg.message}\n`;
+          chatContent += `${formattedTimestamp} - ${sender}: ${msg.message}\n`;
         }
 
         // Add the chat file to the zip
@@ -409,78 +386,14 @@ const Settings = () => {
     <div className="flex h-screen">
       <NavSidebar />
       <div className="flex-1 overflow-auto ml-20">
-        <div className="p-6">
-          <h1 className="text-2xl font-semibold mb-6">Settings</h1>
+        <div className="max-w-4xl mx-auto py-8 px-4">
+          <h1 className="text-2xl font-bold text-gray-900 mb-8">Settings</h1>
           
           <div className="space-y-8">
             {/* Google Sheets Section */}
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-medium mb-4">Google Sheets Integration</h2>
               <GoogleSheetsButton />
-            </div>
-
-            {/* Contact Tags Section */}
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-medium mb-4">Contact Tags</h2>
-              <div className="space-y-4">
-                <p className="text-sm text-gray-600">
-                  Manage tags for your contacts to help organize and filter conversations.
-                </p>
-                
-                {loading ? (
-                  <div className="text-sm text-gray-600">Loading contacts...</div>
-                ) : (
-                  <div className="space-y-4">
-                    {contacts.map(contact => (
-                      <div key={contact.phoneNumber} className="border-b pb-4 last:border-b-0">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-medium">+{contact.phoneNumber}</span>
-                          <div className="flex items-center space-x-2">
-                            <input
-                              type="text"
-                              value={newTag}
-                              onChange={(e) => setNewTag(e.target.value)}
-                              placeholder="Add tag..."
-                              className="px-2 py-1 text-sm border rounded"
-                              onKeyPress={(e) => {
-                                if (e.key === 'Enter') {
-                                  handleAddTag(contact.phoneNumber, newTag);
-                                  setNewTag('');
-                                }
-                              }}
-                            />
-                            <button
-                              onClick={() => {
-                                handleAddTag(contact.phoneNumber, newTag);
-                                setNewTag('');
-                              }}
-                              className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
-                            >
-                              Add
-                            </button>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {contact.tags.map(tag => (
-                            <span
-                              key={tag}
-                              className="inline-flex items-center px-2 py-1 text-sm bg-gray-100 rounded-full"
-                            >
-                              {tag}
-                              <button
-                                onClick={() => handleRemoveTag(contact.phoneNumber, tag)}
-                                className="ml-1 text-gray-500 hover:text-gray-700"
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* WhatsApp Backup Import Section */}

@@ -11,23 +11,20 @@ interface SidebarProps {
 
 const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'open' | 'closed'>('all');
 
-  // Get all unique tags
-  const allTags = Array.from(new Set(contacts.flatMap(contact => contact.tags || [])));
-
-  const filteredContacts = contacts.filter(contact => {
-    const matchesSearch = 
-      contact.phoneNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      contact.lastMessage.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesTag = !selectedTag || (contact.tags && contact.tags.includes(selectedTag));
-    
-    const matchesStatus = selectedStatus === 'all' || contact.status === selectedStatus;
-    
-    return matchesSearch && matchesTag && matchesStatus;
-  });
+  // Sort contacts by lastTimestamp (newest first) and then filter
+  const filteredContacts = contacts
+    .sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+    .filter(contact => {
+      const matchesSearch = 
+        contact.phoneNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        contact.lastMessage.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesStatus = selectedStatus === 'all' || contact.status === selectedStatus;
+      
+      return matchesSearch && matchesStatus;
+    });
 
   return (
     <div className="h-full flex flex-col bg-white">
@@ -48,7 +45,7 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
       {/* Filters Section */}
       <div className="p-4 border-b flex-shrink-0">
         {/* Status Filter */}
-        <div className="flex gap-2 mb-3">
+        <div className="flex gap-2">
           <button
             onClick={() => setSelectedStatus('all')}
             className={`px-3 py-1 text-sm rounded-full flex-1 ${
@@ -80,27 +77,6 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
             Closed
           </button>
         </div>
-
-        {/* Tags Dropdown */}
-        <div className="relative">
-          <select
-            value={selectedTag || ''}
-            onChange={(e) => setSelectedTag(e.target.value || null)}
-            className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer appearance-none"
-          >
-            <option value="">All Tags</option>
-            {allTags.map(tag => (
-              <option key={tag} value={tag}>
-                {tag}
-              </option>
-            ))}
-          </select>
-          <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
-            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-            </svg>
-          </div>
-        </div>
       </div>
 
       {/* Contacts List */}
@@ -113,12 +89,16 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
             }`}
             onClick={() => onSelectContact(contact)}
           >
-            <div className="w-12 h-12 flex-shrink-0 bg-gray-300 rounded-full flex items-center justify-center text-white text-lg">
+            <div 
+              className="w-12 h-12 flex-shrink-0 bg-gray-300 rounded-full flex items-center justify-center text-white text-lg"
+            >
               {contact.phoneNumber[0]}
             </div>
             <div className="ml-4 flex-1 min-w-0">
               <div className="flex justify-between items-start gap-2">
-                <span className="font-medium truncate">{contact.phoneNumber}</span>
+                <span className="font-medium truncate">
+                  {contact.phoneNumber}
+                </span>
                 <div className="flex items-center gap-2">
                   {contact.status && (
                     <span
@@ -144,7 +124,7 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
                   {contact.tags.map(tag => (
                     <span
                       key={tag}
-                      className="inline-flex items-center px-2 py-0.5 text-xs bg-gray-100 rounded-full"
+                      className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full"
                     >
                       {tag}
                     </span>

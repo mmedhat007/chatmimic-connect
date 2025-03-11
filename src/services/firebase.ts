@@ -77,44 +77,59 @@ export const getCurrentUser = (): string | null => {
 };
 
 // Get all contacts (phone numbers) with their last messages
-export const getContacts = async (): Promise<Contact[]> => {
+export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void => {
   const userUID = getCurrentUser();
   if (!userUID) {
     console.error('No user logged in');
-    return [];
+    onUpdate([]);
+    return () => {};
   }
 
   try {
     const chatsRef = collection(db, `Whatsapp_Data/${userUID}/chats`);
-    const chatsSnapshot = await getDocs(chatsRef);
     
-    const contacts: Contact[] = [];
-    
-    for (const doc of chatsSnapshot.docs) {
-      const data = doc.data();
-      let lastTimestamp = Date.now();
+    // Set up real-time listener
+    const unsubscribe = onSnapshot(chatsRef, (snapshot) => {
+      const contacts: Contact[] = [];
       
-      // Handle Firestore timestamp
-      if (data.lastMessageTime?.seconds) {
-        lastTimestamp = data.lastMessageTime.seconds * 1000;
-      }
-      
-      contacts.push({
-        phoneNumber: doc.id,
-        contactName: data.contactName,
-        lastMessage: data.lastMessage || '',
-        lastTimestamp,
-        tags: data.tags || [],  // Include tags in the contact data
-        agentStatus: data.agentStatus || 'off',
-        humanAgent: data.humanAgent || false,
-        status: data.status || 'open' // Default to open if no status is set
+      snapshot.docs.forEach((doc) => {
+        const data = doc.data();
+        let lastTimestamp = Date.now();
+        
+        // Handle Firestore timestamp
+        if (data.lastMessageTime?.seconds) {
+          lastTimestamp = data.lastMessageTime.seconds * 1000;
+        } else if (data.lastMessageTime instanceof Date) {
+          lastTimestamp = data.lastMessageTime.getTime();
+        } else if (data.lastMessageTime) {
+          lastTimestamp = new Date(data.lastMessageTime).getTime();
+        }
+        
+        contacts.push({
+          phoneNumber: doc.id,
+          contactName: data.contactName,
+          lastMessage: data.lastMessage || '',
+          lastTimestamp,
+          tags: data.tags || [],
+          agentStatus: data.agentStatus || 'off',
+          humanAgent: data.humanAgent || false,
+          status: data.status || 'open'
+        });
       });
-    }
+      
+      // Sort contacts by lastTimestamp in descending order (newest first)
+      const sortedContacts = contacts.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+      onUpdate(sortedContacts);
+    }, (error) => {
+      console.error('Error in contacts listener:', error);
+      onUpdate([]);
+    });
     
-    return contacts.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+    return unsubscribe;
   } catch (error) {
-    console.error('Error fetching contacts:', error);
-    return [];
+    console.error('Error setting up contacts listener:', error);
+    onUpdate([]);
+    return () => {};
   }
 };
 
