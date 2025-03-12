@@ -2,7 +2,7 @@ export interface Contact {
   phoneNumber: string;
   contactName?: string;
   lastMessage: string;
-  lastTimestamp: number;
+  lastMessageTime: number;
   tags?: string[];
   agentStatus?: 'on' | 'off';
   humanAgent?: boolean;

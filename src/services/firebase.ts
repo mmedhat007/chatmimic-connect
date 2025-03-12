@@ -13,7 +13,8 @@ import {
   where,
   limit,
   startAfter,
-  onSnapshot
+  onSnapshot,
+  updateDoc
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -94,22 +95,25 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
       
       snapshot.docs.forEach((doc) => {
         const data = doc.data();
-        let lastTimestamp = Date.now();
+        let lastMessageTime = Date.now();
         
         // Handle Firestore timestamp
         if (data.lastMessageTime?.seconds) {
-          lastTimestamp = data.lastMessageTime.seconds * 1000;
+          lastMessageTime = data.lastMessageTime.seconds * 1000;
         } else if (data.lastMessageTime instanceof Date) {
-          lastTimestamp = data.lastMessageTime.getTime();
+          lastMessageTime = data.lastMessageTime.getTime();
         } else if (data.lastMessageTime) {
-          lastTimestamp = new Date(data.lastMessageTime).getTime();
+          lastMessageTime = new Date(data.lastMessageTime).getTime();
         }
+
+        console.log(`Contact ${doc.id} - Raw lastMessageTime:`, data.lastMessageTime);
+        console.log(`Contact ${doc.id} - Processed lastMessageTime:`, lastMessageTime, new Date(lastMessageTime).toISOString());
         
         contacts.push({
           phoneNumber: doc.id,
           contactName: data.contactName,
           lastMessage: data.lastMessage || '',
-          lastTimestamp,
+          lastMessageTime,
           tags: data.tags || [],
           agentStatus: data.agentStatus || 'off',
           humanAgent: data.humanAgent || false,
@@ -117,9 +121,27 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
         });
       });
       
-      // Sort contacts by lastTimestamp in descending order (newest first)
-      const sortedContacts = contacts.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
-      onUpdate(sortedContacts);
+      console.log('Before sorting - Contacts:', contacts.map(c => ({
+        phoneNumber: c.phoneNumber,
+        lastMessageTime: c.lastMessageTime,
+        date: new Date(c.lastMessageTime).toISOString()
+      })));
+
+      // Sort contacts by lastMessageTime in descending order (newest first)
+      contacts.sort((a, b) => {
+        // Convert both times to numbers to ensure consistent comparison
+        const timeA = typeof a.lastMessageTime === 'number' ? a.lastMessageTime : new Date(a.lastMessageTime).getTime();
+        const timeB = typeof b.lastMessageTime === 'number' ? b.lastMessageTime : new Date(b.lastMessageTime).getTime();
+        return timeB - timeA;
+      });
+      
+      console.log('After sorting - Contacts:', contacts.map(c => ({
+        phoneNumber: c.phoneNumber,
+        lastMessageTime: c.lastMessageTime,
+        date: new Date(c.lastMessageTime).toISOString()
+      })));
+
+      onUpdate(contacts);
     }, (error) => {
       console.error('Error in contacts listener:', error);
       onUpdate([]);
@@ -130,6 +152,68 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
     console.error('Error setting up contacts listener:', error);
     onUpdate([]);
     return () => {};
+  }
+};
+
+// Helper function to check if two timestamps are within 24 hours
+const isWithin24Hours = (timestamp1: number, timestamp2: number): boolean => {
+  const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+  return Math.abs(timestamp1 - timestamp2) < TWENTY_FOUR_HOURS;
+};
+
+// Track WhatsApp executions
+const trackWhatsAppExecution = async (userUID: string, phoneNumber: string, messages: Message[]): Promise<void> => {
+  try {
+    const userRef = doc(db, 'Users', userUID);
+    const userDoc = await getDoc(userRef);
+    
+    if (!userDoc.exists()) {
+      console.error('User document not found');
+      return;
+    }
+
+    const workflowData = userDoc.data()?.workflows?.whatsapp_agent || {};
+    const now = Date.now();
+
+    // Check if we need to reset executions
+    if (workflowData.reset_date && now >= new Date(workflowData.reset_date).getTime()) {
+      workflowData.executions_used = 0;
+      workflowData.reset_date = new Date(now + 30 * 24 * 60 * 60 * 1000); // Next reset in 30 days
+    }
+
+    // Sort messages by timestamp
+    const sortedMessages = [...messages].sort((a, b) => a.timestamp - b.timestamp);
+    
+    // Find message groups within 24-hour windows
+    let lastMessageTime = 0;
+    let newConversationStarted = false;
+
+    for (const message of sortedMessages) {
+      // If this message is more than 24 hours after the last message, it starts a new conversation
+      if (!isWithin24Hours(message.timestamp, lastMessageTime)) {
+        newConversationStarted = true;
+      }
+
+      if (newConversationStarted) {
+        // Increment executions_used for each new 24-hour conversation window
+        workflowData.executions_used = (workflowData.executions_used || 0) + 1;
+        newConversationStarted = false;
+      }
+
+      lastMessageTime = message.timestamp;
+    }
+
+    // Update the workflow data in Firestore
+    await updateDoc(userRef, {
+      'workflows.whatsapp_agent': {
+        executions_used: workflowData.executions_used || 0,
+        limit: workflowData.limit || 1000,
+        reset_date: workflowData.reset_date || new Date(now + 30 * 24 * 60 * 60 * 1000)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error tracking WhatsApp execution:', error);
   }
 };
 
@@ -174,6 +258,11 @@ export const getMessages = (phoneNumber: string, onUpdate: (messages: Message[])
           date: data.date
         };
       });
+      
+      // Track executions whenever messages are updated
+      if (userUID) {
+        trackWhatsAppExecution(userUID, phoneNumber, messages);
+      }
       
       onUpdate(messages);
     }, (error) => {
@@ -223,17 +312,17 @@ export const getContact = async (phoneNumber: string): Promise<Contact | null> =
     
     if (contactSnap.exists()) {
       const data = contactSnap.data();
-      let lastTimestamp = Date.now();
+      let lastMessageTime = Date.now();
       
-      if (data.lastTimestamp?.seconds) {
-        lastTimestamp = data.lastTimestamp.seconds * 1000;
+      if (data.lastMessageTime?.seconds) {
+        lastMessageTime = data.lastMessageTime.seconds * 1000;
       }
 
       return {
         phoneNumber: contactSnap.id,
         contactName: data.contactName,
         lastMessage: data.lastMessage || '',
-        lastTimestamp
+        lastMessageTime
       };
     } else {
       console.log("No such contact!");
