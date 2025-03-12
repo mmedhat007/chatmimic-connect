@@ -47,27 +47,24 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
 
   // Check if human agent is active
   useEffect(() => {
-    const checkHumanAgentStatus = async () => {
-      if (!contact) return;
-      
-      const userUID = getCurrentUser();
-      if (!userUID) return;
+    if (!contact) return;
+    
+    const userUID = getCurrentUser();
+    if (!userUID) return;
 
-      try {
-        const chatRef = doc(db, 'Whatsapp_Data', userUID, 'chats', contact.phoneNumber);
-        const chatDoc = await getDoc(chatRef);
-        
-        if (chatDoc.exists()) {
-          const data = chatDoc.data();
-          // Only need to check if human agent is active, AI status doesn't affect messaging
-          setIsHumanAgent(data.humanAgent === true);
-        }
-      } catch (error) {
-        console.error('Error checking human agent status:', error);
+    const chatRef = doc(db, 'Whatsapp_Data', userUID, 'chats', contact.phoneNumber);
+    
+    // Set up real-time listener for human agent status
+    const unsubscribe = onSnapshot(chatRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        setIsHumanAgent(data.humanAgent === true);
       }
-    };
+    }, (error) => {
+      console.error('Error checking human agent status:', error);
+    });
 
-    checkHumanAgentStatus();
+    return () => unsubscribe();
   }, [contact]);
 
   const handleSendMessage = async () => {
@@ -78,6 +75,63 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
 
     setIsLoading(true);
     try {
+      // Get user's WhatsApp credentials
+      const userRef = doc(db, 'Users', userUID);
+      const userDoc = await getDoc(userRef);
+      
+      if (!userDoc.exists()) {
+        throw new Error('User document not found');
+      }
+
+      const userData = userDoc.data();
+      const whatsappCredentials = userData.credentials?.whatsappCredentials;
+      
+      if (!whatsappCredentials?.access_token || !whatsappCredentials?.phone_number_id) {
+        throw new Error('WhatsApp credentials not found');
+      }
+
+      // Format the phone number to ensure it includes country code
+      const formattedPhoneNumber = contact.phoneNumber.startsWith('+') ? contact.phoneNumber : `+${contact.phoneNumber}`;
+
+      // Send message through WhatsApp API
+      console.log('Sending message with credentials:', {
+        phoneNumberId: whatsappCredentials.phone_number_id,
+        to: formattedPhoneNumber
+      });
+
+      const response = await fetch(`https://graph.facebook.com/v17.0/${whatsappCredentials.phone_number_id}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${whatsappCredentials.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: formattedPhoneNumber,
+          type: "text",
+          text: {
+            preview_url: false,
+            body: newMessage.trim()
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        console.error('WhatsApp API Error:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorData,
+          phoneNumber: formattedPhoneNumber
+        });
+        throw new Error(`WhatsApp API Error (${response.status}): ${errorData?.error?.message || response.statusText}`);
+      }
+
+      // Parse the successful response
+      const responseData = await response.json();
+      console.log('WhatsApp API Success:', responseData);
+
       const timestamp = new Date();
       const messagesRef = collection(
         db,
@@ -95,7 +149,7 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
         date: timestamp.toLocaleDateString()
       };
 
-      // Add the new message
+      // Add the message to Firestore
       await addDoc(messagesRef, messageData);
 
       // Update the chat's last message and timestamp
@@ -103,14 +157,14 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
       await updateDoc(chatRef, {
         lastMessage: newMessage.trim(),
         lastMessageTime: timestamp,
-        lastMessageSender: 'human',
-        lastTimestamp: timestamp.getTime()
+        lastMessageSender: 'human'
       });
 
       // Clear the input
       setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
+      alert('Failed to send message: ' + (error as Error).message);
     } finally {
       setIsLoading(false);
     }

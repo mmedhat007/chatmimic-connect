@@ -13,9 +13,8 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'open' | 'closed'>('all');
 
-  // Sort contacts by lastTimestamp (newest first) and then filter
+  // Filter contacts without re-sorting
   const filteredContacts = contacts
-    .sort((a, b) => b.lastTimestamp - a.lastTimestamp)
     .filter(contact => {
       const matchesSearch = 
         contact.phoneNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -100,6 +99,19 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
                   {contact.phoneNumber}
                 </span>
                 <div className="flex items-center gap-2">
+                  {/* Agent Status */}
+                  {(contact.humanAgent || contact.agentStatus === 'on') && (
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        contact.humanAgent
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-green-100 text-green-800'
+                      }`}
+                    >
+                      {contact.humanAgent ? 'Human' : 'AI'}
+                    </span>
+                  )}
+                  {/* Chat Status */}
                   {contact.status && (
                     <span
                       className={`text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -112,7 +124,7 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
                     </span>
                   )}
                   <span className="text-sm text-gray-500 flex-shrink-0">
-                    {formatTimestamp(contact.lastTimestamp)}
+                    {formatTimestamp(contact.lastMessageTime)}
                   </span>
                 </div>
               </div>
