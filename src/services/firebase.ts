@@ -14,7 +14,8 @@ import {
   limit,
   startAfter,
   onSnapshot,
-  updateDoc
+  updateDoc,
+  setDoc
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -56,6 +57,19 @@ export const registerUser = async (email: string, password: string) => {
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     localStorage.setItem('userUID', userCredential.user.uid);
+    
+    // Create user document in Users collection with correct structure
+    const userRef = doc(db, 'Users', userCredential.user.uid);
+    await setDoc(userRef, {
+      email,
+      created_at: new Date(),
+      credentials: {
+        googleAuthCredentials: {},
+        whatsappCredentials: {}
+      },
+      workflows: {}
+    });
+
     return userCredential.user;
   } catch (error) {
     console.error('Error registering:', error);
