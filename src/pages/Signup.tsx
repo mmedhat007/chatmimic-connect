@@ -1,22 +1,41 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { loginUser } from '../services/firebase';
+import { registerUser } from '../services/firebase';
 
-const Login = () => {
+const Signup = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setIsLoading(true);
+
+    // Validate passwords match
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      setIsLoading(false);
+      return;
+    }
+
+    // Validate password strength
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters long');
+      setIsLoading(false);
+      return;
+    }
 
     try {
-      await loginUser(email, password);
+      await registerUser(email, password);
       navigate('/platform-select');
     } catch (error: any) {
-      setError(error.message || 'An error occurred');
+      setError(error.message || 'Failed to create account');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -25,9 +44,9 @@ const Login = () => {
       <div className="max-w-md w-full bg-white rounded-lg shadow-lg overflow-hidden">
         {/* Header */}
         <div className="bg-[#09659c] px-6 py-8 text-center">
-          <h2 className="text-3xl font-bold text-white">Welcome Back</h2>
+          <h2 className="text-3xl font-bold text-white">Create your account</h2>
           <p className="mt-2 text-gray-100">
-            Sign in to your account to continue
+            Join DenoteAI to get started
           </p>
         </div>
 
@@ -49,6 +68,7 @@ const Login = () => {
                   id="email"
                   name="email"
                   type="email"
+                  autoComplete="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -65,6 +85,7 @@ const Login = () => {
                   id="password"
                   name="password"
                   type="password"
+                  autoComplete="new-password"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -72,25 +93,45 @@ const Login = () => {
                   placeholder="Enter your password"
                 />
               </div>
+
+              <div>
+                <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">
+                  Confirm Password
+                </label>
+                <input
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#09659c] focus:border-[#09659c] transition-colors"
+                  placeholder="Confirm your password"
+                />
+              </div>
             </div>
 
             <button
               type="submit"
-              className="w-full bg-[#09659c] text-white py-2 px-4 rounded-lg hover:bg-[#074e79] transition-colors focus:outline-none focus:ring-2 focus:ring-[#09659c] focus:ring-offset-2"
+              disabled={isLoading}
+              className={`w-full bg-[#09659c] text-white py-2 px-4 rounded-lg hover:bg-[#074e79] transition-colors focus:outline-none focus:ring-2 focus:ring-[#09659c] focus:ring-offset-2 ${
+                isLoading ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
             >
-              Sign In
+              {isLoading ? 'Creating account...' : 'Sign up'}
             </button>
           </form>
 
-          {/* Sign up link */}
+          {/* Login link */}
           <div className="mt-4 text-center">
             <p className="text-sm text-gray-600">
-              Don't have an account?{' '}
+              Already have an account?{' '}
               <button
-                onClick={() => navigate('/signup')}
+                onClick={() => navigate('/login')}
                 className="font-medium text-[#09659c] hover:text-[#074e79]"
               >
-                Sign up
+                Sign in
               </button>
             </p>
           </div>
@@ -108,4 +149,4 @@ const Login = () => {
   );
 };
 
-export default Login; 
+export default Signup; 

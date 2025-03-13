@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import GoogleSheetsButton from '../components/GoogleSheetsButton';
 import { getCurrentUser } from '../services/firebase';
-import { doc, setDoc, collection, addDoc, getDocs, getDoc, updateDoc, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, getDocs, getDoc, updateDoc, query, orderBy, deleteDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import NavSidebar from '../components/NavSidebar';
 import JSZip from 'jszip';
 import { getContacts } from '../services/firebase';
+import { useToast } from "@/hooks/use-toast";
 
 interface ChatFile {
   file: File;
@@ -19,12 +21,17 @@ interface Contact {
 }
 
 const Settings = () => {
+  const navigate = useNavigate();
+  const { toast } = useToast();
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [importProgress, setImportProgress] = useState<string>('');
   const [exportProgress, setExportProgress] = useState<string>('');
   const [selectedFiles, setSelectedFiles] = useState<ChatFile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   // Remove contacts and tag management related code
   useEffect(() => {
@@ -382,10 +389,105 @@ const Settings = () => {
     }
   };
 
+  const handleDeleteWhatsAppData = async () => {
+    if (deleteConfirmText !== 'DELETE') {
+      toast({
+        title: "Error",
+        description: "Please type 'DELETE' to confirm the account deletion",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const userUID = getCurrentUser();
+    if (!userUID) {
+      toast({
+        title: "Error",
+        description: "User not found. Please try logging in again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const batch = writeBatch(db);
+
+      // 1. Delete WhatsApp credentials from Users collection
+      const userRef = doc(db, 'Users', userUID);
+      const userDoc = await getDoc(userRef);
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        // Remove WhatsApp credentials and workflow while preserving other data
+        const updatedCredentials = { ...userData.credentials };
+        delete updatedCredentials.whatsappCredentials;
+        const updatedWorkflows = { ...userData.workflows };
+        delete updatedWorkflows.whatsapp_agent;
+        
+        batch.update(userRef, {
+          credentials: updatedCredentials,
+          workflows: updatedWorkflows
+        });
+      }
+
+      // 2. Delete all chats and their messages from Whatsapp_Data
+      const chatsRef = collection(db, 'Whatsapp_Data', userUID, 'chats');
+      const chatsSnapshot = await getDocs(chatsRef);
+      
+      // Delete each chat and its messages
+      for (const chatDoc of chatsSnapshot.docs) {
+        // Delete all messages in the chat
+        const messagesRef = collection(chatDoc.ref, 'messages');
+        const messagesSnapshot = await getDocs(messagesRef);
+        messagesSnapshot.docs.forEach(messageDoc => {
+          batch.delete(messageDoc.ref);
+        });
+        
+        // Delete the chat document
+        batch.delete(chatDoc.ref);
+      }
+
+      // 3. Delete templates
+      const templatesRef = collection(db, 'Whatsapp_Data', userUID, 'templates');
+      const templatesSnapshot = await getDocs(templatesRef);
+      templatesSnapshot.docs.forEach(templateDoc => {
+        batch.delete(templateDoc.ref);
+      });
+
+      // 4. Delete the main Whatsapp_Data document
+      const whatsappDataRef = doc(db, 'Whatsapp_Data', userUID);
+      batch.delete(whatsappDataRef);
+
+      // Commit all the changes
+      await batch.commit();
+
+      toast({
+        title: "Success",
+        description: "Your WhatsApp data has been successfully deleted.",
+      });
+
+      // Navigate to platform select page
+      navigate('/platform-select');
+    } catch (error) {
+      console.error('Error deleting WhatsApp data:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error 
+          ? `Failed to delete WhatsApp data: ${error.message}`
+          : "Failed to delete WhatsApp data. Please try again later.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+      setDeleteConfirmText('');
+    }
+  };
+
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen bg-gray-100">
       <NavSidebar />
-      <div className="flex-1 overflow-auto ml-20">
+      <div className="flex-1 overflow-auto p-8">
         <div className="max-w-4xl mx-auto py-8 px-4">
           <h1 className="text-2xl font-bold text-gray-900 mb-8">Settings</h1>
           
@@ -462,6 +564,55 @@ const Settings = () => {
                 {exportProgress && (
                   <div className="text-sm text-gray-600">
                     {exportProgress}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Delete Account Section */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex items-start justify-between">
+                <div className="flex-1 max-w-2xl">
+                  <h3 className="text-lg font-medium mb-2">Delete WhatsApp Integration</h3>
+                  <p className="text-sm text-gray-500">
+                    This will permanently delete all your WhatsApp data, including chats, messages, and templates.
+                    This action cannot be undone.
+                  </p>
+                </div>
+                {!showDeleteConfirm ? (
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="ml-6 bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors whitespace-nowrap"
+                  >
+                    Delete WhatsApp Data
+                  </button>
+                ) : (
+                  <div className="ml-6 flex flex-col gap-3">
+                    <input
+                      type="text"
+                      placeholder="Type 'DELETE' to confirm"
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <div className="flex justify-end gap-3">
+                      <button
+                        onClick={() => {
+                          setShowDeleteConfirm(false);
+                          setDeleteConfirmText('');
+                        }}
+                        className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleDeleteWhatsAppData}
+                        disabled={isDeleting || deleteConfirmText !== 'DELETE'}
+                        className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isDeleting ? 'Deleting...' : 'Confirm Delete'}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
