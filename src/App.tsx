@@ -12,6 +12,7 @@ import Contacts from './pages/Contacts';
 import PlatformSelect from './pages/PlatformSelect';
 import ComingSoon from './pages/ComingSoon';
 import BroadcastPage from './pages/BroadcastPage';
+import ResetPassword from './pages/ResetPassword';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -33,6 +34,7 @@ const App = () => {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route
           path="/platform-select"
           element={

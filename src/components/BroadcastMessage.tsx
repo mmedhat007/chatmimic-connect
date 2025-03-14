@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { doc, getDoc, collection, getDocs, addDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, addDoc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db, getCurrentUser } from '../services/firebase';
 import { useToast } from '../hooks/use-toast';
 import * as XLSX from 'xlsx';
-import { Send, Plus, AlertCircle } from 'lucide-react';
+import { Send, Plus, AlertCircle, Check, Trash2 } from 'lucide-react';
 
 interface Contact {
   phoneNumber: string;
@@ -51,6 +51,7 @@ const BroadcastMessage = () => {
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({});
   const [showTemplateForm, setShowTemplateForm] = useState(false);
+  const [isDeletingTemplate, setIsDeletingTemplate] = useState(false);
   const [newTemplate, setNewTemplate] = useState<Partial<Template>>({
     category: 'UTILITY',
     language: 'en',
@@ -495,6 +496,44 @@ const BroadcastMessage = () => {
     }
   };
 
+  const deleteTemplate = async (templateId: string) => {
+    if (!window.confirm('Are you sure you want to delete this template? This action cannot be undone.')) {
+      return;
+    }
+
+    const userUID = getCurrentUser();
+    if (!userUID) return;
+
+    setIsDeletingTemplate(true);
+    try {
+      const templateRef = doc(db, 'Whatsapp_Data', userUID, 'templates', templateId);
+      await deleteDoc(templateRef);
+
+      // Remove template from local state
+      setTemplates(prev => prev.filter(t => t.id !== templateId));
+      
+      // If the deleted template was selected, clear the selection
+      if (selectedTemplate?.id === templateId) {
+        setSelectedTemplate(null);
+        setTemplateVariables({});
+      }
+
+      toast({
+        title: "Success",
+        description: "Template deleted successfully",
+      });
+    } catch (error) {
+      console.error('Error deleting template:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete template",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeletingTemplate(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <h2 className="text-lg font-medium mb-4">Send Broadcast Message</h2>
@@ -537,22 +576,38 @@ const BroadcastMessage = () => {
         </div>
         <div className="grid grid-cols-1 gap-3">
           {templates.map(template => (
-            <button
+            <div
               key={template.id}
-              onClick={() => handleTemplateSelect(template)}
-              className={`p-3 border rounded-lg text-left hover:bg-gray-50 transition-colors ${
+              className={`p-3 border rounded-lg ${
                 selectedTemplate?.id === template.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
               }`}
             >
               <div className="flex items-center justify-between">
                 <span className="font-medium">{template.name}</span>
-                <span className={`text-xs px-2 py-1 rounded-full ${
-                  template.status === 'APPROVED' ? 'bg-green-100 text-green-800' :
-                  template.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
-                  'bg-red-100 text-red-800'
-                }`}>
-                  {template.status}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs px-2 py-1 rounded-full ${
+                    template.status === 'APPROVED' ? 'bg-green-100 text-green-800' :
+                    template.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-red-100 text-red-800'
+                  }`}>
+                    {template.status}
+                  </span>
+                  <button
+                    onClick={() => handleTemplateSelect(template)}
+                    className="text-blue-600 hover:text-blue-700 p-1 rounded"
+                    title="Select template"
+                  >
+                    <Check size={16} />
+                  </button>
+                  <button
+                    onClick={() => deleteTemplate(template.id)}
+                    disabled={isDeletingTemplate}
+                    className="text-red-600 hover:text-red-700 p-1 rounded disabled:opacity-50"
+                    title="Delete template"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
               <p className="text-sm text-gray-600 mt-1">
                 {template.components?.find(c => c.type === 'BODY')?.text || 'No body content'}
@@ -565,7 +620,7 @@ const BroadcastMessage = () => {
                   {template.language}
                 </span>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       </div>

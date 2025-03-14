@@ -23,6 +23,7 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
   User
 } from 'firebase/auth';
 import { Contact, Message, AnalyticsData } from '../types';
@@ -521,5 +522,14 @@ export const getAnalyticsData = async (dateRange?: 'today' | 'week' | 'month' | 
         'Thursday': 0, 'Friday': 0, 'Saturday': 0
       }
     };
+  }
+};
+
+export const resetPassword = async (email: string) => {
+  try {
+    await firebaseSendPasswordResetEmail(auth, email);
+  } catch (error) {
+    console.error('Error sending password reset email:', error);
+    throw error;
   }
 };

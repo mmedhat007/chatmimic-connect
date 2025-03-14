@@ -71,6 +71,15 @@ const Login = () => {
                   className="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#09659c] focus:border-[#09659c] transition-colors"
                   placeholder="Enter your password"
                 />
+                <div className="mt-1 text-right">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/reset-password')}
+                    className="text-sm text-[#09659c] hover:text-[#074e79]"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
               </div>
             </div>
 
