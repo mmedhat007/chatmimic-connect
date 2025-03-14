@@ -10,7 +10,7 @@ import {
   CollectionReference,
   DocumentData,
   collectionGroup,
-  where,
+  where, 
   limit,
   startAfter,
   onSnapshot,
@@ -265,7 +265,7 @@ export const getMessages = (phoneNumber: string, onUpdate: (messages: Message[])
         }
 
         return {
-          id: doc.id,
+      id: doc.id,
           message: data.message || '',
           timestamp,
           sender: sender as 'agent' | 'human' | 'user',
@@ -462,12 +462,12 @@ export const getAnalyticsData = async (dateRange?: 'today' | 'week' | 'month' | 
 
       // Update analytics data with this batch
       filteredMessages.forEach(message => {
-        const date = new Date(message.timestamp);
-        const hour = date.getHours();
-        const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][date.getDay()];
-        
-        messagesByHour[hour]++;
-        messagesByDay[dayOfWeek]++;
+    const date = new Date(message.timestamp);
+    const hour = date.getHours();
+    const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][date.getDay()];
+    
+    messagesByHour[hour]++;
+    messagesByDay[dayOfWeek]++;
       });
 
       totalMessages += filteredMessages.length;
@@ -499,15 +499,15 @@ export const getAnalyticsData = async (dateRange?: 'today' | 'week' | 'month' | 
         default:
           activeContactCount = activeContacts.size;
       }
-    });
-
-    return {
+  });
+  
+  return {
       totalMessages,
       totalContacts: activeContactCount,
-      messagesByHour: Object.entries(messagesByHour).map(([hour, count]) => ({
-        hour: parseInt(hour),
-        count
-      })),
+    messagesByHour: Object.entries(messagesByHour).map(([hour, count]) => ({
+      hour: parseInt(hour),
+      count
+    })),
       messagesByDay
     };
   } catch (error) {

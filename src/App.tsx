@@ -11,6 +11,7 @@ import ChatBotPage from './pages/ChatBotPage';
 import Contacts from './pages/Contacts';
 import PlatformSelect from './pages/PlatformSelect';
 import ComingSoon from './pages/ComingSoon';
+import BroadcastPage from './pages/BroadcastPage';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -85,6 +86,14 @@ const App = () => {
           element={
             <ProtectedRoute>
               <ChatBotPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/broadcast"
+          element={
+            <ProtectedRoute>
+              <BroadcastPage />
             </ProtectedRoute>
           }
         />

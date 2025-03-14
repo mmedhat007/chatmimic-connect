@@ -21,6 +21,16 @@ service cloud.firestore {
     match /Users/{userId} {
       // Allow read and write if user is admin or accessing their own document
       allow read, write: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      
+      // Allow access to workflows subcollection
+      match /workflows/{workflowId} {
+        allow read, write: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      }
+    }
+
+    // Allow admin to list all users
+    match /Users/{userId} {
+      allow list: if isAuthenticated() && isAdmin();
     }
 
     // Whatsapp_Data collection rules
@@ -36,6 +46,11 @@ service cloud.firestore {
         match /messages/{messageId} {
           allow read, write: if isAuthenticated() && (isOwner(userId) || isAdmin());
         }
+      }
+      
+      // Templates subcollection
+      match /templates/{templateId} {
+        allow read, write: if isAuthenticated() && (isOwner(userId) || isAdmin());
       }
     }
 

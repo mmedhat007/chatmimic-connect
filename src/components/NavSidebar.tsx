@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MessageSquare, BarChart, Menu, LogOut, Bot, Settings, Users } from 'lucide-react';
+import { MessageSquare, BarChart, Menu, LogOut, Bot, Settings, Users, Send } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser } from '../services/firebase';
 
@@ -19,6 +19,7 @@ const NavSidebar = () => {
   const navItems = [
     { icon: MessageSquare, text: 'Chats', path: '/' },
     { icon: Users, text: 'Contacts', path: '/contacts' },
+    { icon: Send, text: 'Broadcast', path: '/broadcast' },
     { icon: BarChart, text: 'Analytics', path: '/analytics' },
     { icon: Bot, text: 'Assistant', path: '/chatbot' },
     { icon: Settings, text: 'Settings', path: '/settings' },

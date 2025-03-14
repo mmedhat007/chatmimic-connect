@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { doc, updateDoc, getDoc, setDoc, collection } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, setDoc, collection, addDoc } from 'firebase/firestore';
 import { db, getCurrentUser } from '../services/firebase';
+import { useNavigate } from 'react-router-dom';
 
 interface WhatsAppCredentials {
   access_token: string;
@@ -15,6 +16,7 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const navigate = useNavigate();
 
   const validateCredentials = async (creds: WhatsAppCredentials): Promise<boolean> => {
     try {
@@ -126,14 +128,26 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
       // Create initial chats collection with a placeholder document
       const chatsCollectionRef = collection(db, 'Whatsapp_Data', userUID, 'chats');
       const placeholderChatRef = doc(chatsCollectionRef, 'system');
+      const currentTime = new Date();
+      
       await setDoc(placeholderChatRef, {
         contactName: 'System',
         lastMessage: 'WhatsApp integration setup complete',
-        lastMessageTime: new Date(),
+        lastMessageTime: currentTime,
+        lastTimestamp: currentTime.getTime(),
         status: 'closed',
         agentStatus: 'off',
         humanAgent: false,
         tags: ['system']
+      });
+
+      // Create initial message in the messages subcollection
+      const messagesCollectionRef = collection(placeholderChatRef, 'messages');
+      await addDoc(messagesCollectionRef, {
+        message: 'WhatsApp integration setup complete. You can now start receiving and sending messages.',
+        timestamp: currentTime,
+        sender: 'agent',
+        date: currentTime.toLocaleDateString()
       });
 
       // Create initial templates collection with a placeholder document
@@ -147,6 +161,8 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         type: 'auto_reply'
       });
 
+      // Change navigation to chatbot page after setup
+      navigate('/chatbot');
       onComplete();
     } catch (error) {
       console.error('Error setting up WhatsApp:', error);
@@ -186,9 +202,28 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
           <li>Select "WhatsApp"</li>
           <li>In the WhatsApp configuration:</li>
           <li className="ml-4">Add webhook URL: <code className="bg-gray-100 px-2 py-1 rounded">https://automation.denoteai.tech/webhook/whatsapp-webhook</code></li>
+          <li className="ml-4">Configure webhook notifications:</li>
+          <ol className="list-[lower-alpha] ml-8 space-y-1">
+            <li>Click "Configure" next to Webhooks</li>
+            <li>Click "Edit" or "Subscribe to Events"</li>
+            <li>Check the "messages" checkbox</li>
+            <li>Save the changes</li>
+          </ol>
           <li className="ml-4">Add your WhatsApp business number</li>
-          <li>Create a permanent access token</li>
+          <li>Generate permanent access token:</li>
+          <ol className="list-[lower-alpha] ml-8 space-y-1">
+            <li>Go to "System Users" in Business Settings</li>
+            <li>Create a new System User or select existing</li>
+            <li>Assign "WhatsApp Business Product" role</li>
+            <li>Generate new token with "whatsapp_business_messaging" permission</li>
+            <li>Copy the token immediately (it won't be shown again)</li>
+          </ol>
         </ol>
+        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+          <p className="text-sm text-yellow-800">
+            <strong>Important:</strong> Make sure to save your permanent access token securely. It cannot be retrieved once you leave the page.
+          </p>
+        </div>
         <button 
           onClick={() => setStep(3)}
           className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"

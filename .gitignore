@@ -32,3 +32,6 @@ dist-ssr
 
 # Chatmimic identity assets
 "Chatmimic identity"
+
+# Database structure documentation
+Databases Structure.txt
