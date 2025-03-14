@@ -10,7 +10,14 @@ interface Message {
 }
 
 const ChatBot = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: 'welcome-message',
+      text: "👋 Hi! I'm your DenoteAI Messaging Assistant. I specialize in helping you customize and optimize your messaging agent for better customer interactions.\n\nI can help you with:\n• Customizing agent responses and behavior\n• Setting up conversation flows\n• Creating and managing message templates\n• Configuring auto-replies\n• Optimizing response patterns\n\nWhile I can also answer questions about the dashboard and other features, my primary focus is on helping you create the perfect messaging experience for your customers. How can I assist you today?",
+      sender: 'bot',
+      timestamp: new Date()
+    }
+  ]);
   const [newMessage, setNewMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
