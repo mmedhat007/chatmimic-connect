@@ -411,8 +411,6 @@ const Settings = () => {
 
     setIsDeleting(true);
     try {
-      const batch = writeBatch(db);
-
       // 1. Delete WhatsApp credentials from Users collection
       const userRef = doc(db, 'Users', userUID);
       const userDoc = await getDoc(userRef);
@@ -424,7 +422,7 @@ const Settings = () => {
         const updatedWorkflows = { ...userData.workflows };
         delete updatedWorkflows.whatsapp_agent;
         
-        batch.update(userRef, {
+        await updateDoc(userRef, {
           credentials: updatedCredentials,
           workflows: updatedWorkflows
         });
@@ -439,34 +437,29 @@ const Settings = () => {
         // Delete all messages in the chat
         const messagesRef = collection(chatDoc.ref, 'messages');
         const messagesSnapshot = await getDocs(messagesRef);
-        messagesSnapshot.docs.forEach(messageDoc => {
-          batch.delete(messageDoc.ref);
-        });
+        const messageDeletePromises = messagesSnapshot.docs.map(messageDoc => deleteDoc(messageDoc.ref));
+        await Promise.all(messageDeletePromises);
         
         // Delete the chat document
-        batch.delete(chatDoc.ref);
+        await deleteDoc(chatDoc.ref);
       }
 
       // 3. Delete templates
       const templatesRef = collection(db, 'Whatsapp_Data', userUID, 'templates');
       const templatesSnapshot = await getDocs(templatesRef);
-      templatesSnapshot.docs.forEach(templateDoc => {
-        batch.delete(templateDoc.ref);
-      });
+      const templateDeletePromises = templatesSnapshot.docs.map(templateDoc => deleteDoc(templateDoc.ref));
+      await Promise.all(templateDeletePromises);
 
-      // 4. Delete the main Whatsapp_Data document
+      // 4. Delete the root Whatsapp_Data document for the user
       const whatsappDataRef = doc(db, 'Whatsapp_Data', userUID);
-      batch.delete(whatsappDataRef);
-
-      // Commit all the changes
-      await batch.commit();
+      await deleteDoc(whatsappDataRef);
 
       toast({
         title: "Success",
         description: "Your WhatsApp data has been successfully deleted.",
       });
 
-      // Navigate to platform select page
+      // Navigate to platform select page to set up WhatsApp again
       navigate('/platform-select');
     } catch (error) {
       console.error('Error deleting WhatsApp data:', error);

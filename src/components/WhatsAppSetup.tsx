@@ -97,8 +97,10 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         },
         'workflows.whatsapp_agent': {
           executions_used: 0,
-          limit: 1000, // Basic plan limit
-          reset_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
+          limit: 1000,
+          reset_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
+          paid: false, // Initialize as unpaid
+          setup_completed: false // Track whether AI agent setup is completed
         }
       });
 
@@ -161,12 +163,11 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         type: 'auto_reply'
       });
 
-      // Change navigation to chatbot page after setup
-      navigate('/chatbot');
+      // Call onComplete to navigate to AI agent setup
       onComplete();
     } catch (error) {
-      console.error('Error setting up WhatsApp:', error);
-      setError('Failed to save WhatsApp configuration. Please try again.');
+      console.error('Error in setup:', error);
+      setError('Failed to complete setup. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -181,9 +182,11 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         <h3 className="text-lg font-semibold mb-2">Step 1: Create Meta App</h3>
         <ol className="list-decimal pl-5 space-y-2">
           <li>Go to <a href="https://developers.facebook.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Meta Developers</a></li>
-          <li>Click "Create App"</li>
+          <li>Click "Create App" in the top right corner</li>
           <li>Select "Business" as the app type</li>
-          <li>Fill in your app details and create the app</li>
+          <li>Enter your app name (e.g., "MyCompany WhatsApp")</li>
+          <li>Add your business email for contact</li>
+          <li>Click "Create App" to proceed</li>
         </ol>
         <button 
           onClick={() => setStep(2)}
@@ -196,34 +199,13 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
 
       {/* Step 2: Add WhatsApp */}
       <div className={`mb-8 ${step !== 2 && 'opacity-50'}`}>
-        <h3 className="text-lg font-semibold mb-2">Step 2: Configure WhatsApp</h3>
+        <h3 className="text-lg font-semibold mb-2">Step 2: Add WhatsApp Product</h3>
         <ol className="list-decimal pl-5 space-y-2">
-          <li>In your app dashboard, click "Add Product"</li>
-          <li>Select "WhatsApp"</li>
-          <li>In the WhatsApp configuration:</li>
-          <li className="ml-4">Add webhook URL: <code className="bg-gray-100 px-2 py-1 rounded">https://automation.denoteai.tech/webhook/whatsapp-webhook</code></li>
-          <li className="ml-4">Configure webhook notifications:</li>
-          <ol className="list-[lower-alpha] ml-8 space-y-1">
-            <li>Click "Configure" next to Webhooks</li>
-            <li>Click "Edit" or "Subscribe to Events"</li>
-            <li>Check the "messages" checkbox</li>
-            <li>Save the changes</li>
-          </ol>
-          <li className="ml-4">Add your WhatsApp business number</li>
-          <li>Generate permanent access token:</li>
-          <ol className="list-[lower-alpha] ml-8 space-y-1">
-            <li>Go to "System Users" in Business Settings</li>
-            <li>Create a new System User or select existing</li>
-            <li>Assign "WhatsApp Business Product" role</li>
-            <li>Generate new token with "whatsapp_business_messaging" permission</li>
-            <li>Copy the token immediately (it won't be shown again)</li>
-          </ol>
+          <li>In your app dashboard, find and click "Add Product"</li>
+          <li>Look for "WhatsApp" in the product list</li>
+          <li>Click "Set Up" next to WhatsApp</li>
+          <li>You'll be taken to the WhatsApp configuration page</li>
         </ol>
-        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-          <p className="text-sm text-yellow-800">
-            <strong>Important:</strong> Make sure to save your permanent access token securely. It cannot be retrieved once you leave the page.
-          </p>
-        </div>
         <button 
           onClick={() => setStep(3)}
           className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -233,9 +215,59 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         </button>
       </div>
 
-      {/* Step 3: Enter Credentials */}
+      {/* Step 3: Configure Webhook */}
       <div className={`mb-8 ${step !== 3 && 'opacity-50'}`}>
-        <h3 className="text-lg font-semibold mb-2">Step 3: Enter Your Credentials</h3>
+        <h3 className="text-lg font-semibold mb-2">Step 3: Configure Webhook</h3>
+        <ol className="list-decimal pl-5 space-y-2">
+          <li>In the WhatsApp configuration:</li>
+          <li>Find the "Webhook" section</li>
+          <li>Add webhook URL: <code className="bg-gray-100 px-2 py-1 rounded">https://automation.denoteai.tech/webhook/whatsapp-webhook</code></li>
+          <li>Create a Verify Token (can be any string you choose)</li>
+          <li>Save your Verify Token somewhere safe</li>
+          <li>Scroll down to "Webhook Fields"</li>
+          <li>Click "Manage"</li>
+          <li>Enable the "messages" field</li>
+          <li>Click "Save" to confirm</li>
+        </ol>
+        <button 
+          onClick={() => setStep(4)}
+          className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          disabled={step !== 3}
+        >
+          Next
+        </button>
+      </div>
+
+      {/* Step 4: Phone Number Setup */}
+      <div className={`mb-8 ${step !== 4 && 'opacity-50'}`}>
+        <h3 className="text-lg font-semibold mb-2">Step 4: API Setup & Phone Number</h3>
+        <ol className="list-decimal pl-5 space-y-2">
+          <li>Go to the "API Setup" section</li>
+          <li>Click "Add Phone Number"</li>
+          <li>Follow the verification process to add your business phone number</li>
+          <li>Once verified, copy your Phone Number ID</li>
+          <li>Generate a Permanent Access Token:</li>
+          <ol className="list-[lower-alpha] ml-8 space-y-1">
+            <li>Go to "System Users" in Business Settings</li>
+            <li>Create a new System User or select existing</li>
+            <li>Give it a name like "WhatsApp API Access"</li>
+            <li>Assign "WhatsApp Business Product" role</li>
+            <li>Generate new token with "whatsapp_business_messaging" permission</li>
+            <li>Copy the token immediately (it won't be shown again)</li>
+          </ol>
+        </ol>
+        <button 
+          onClick={() => setStep(5)}
+          className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          disabled={step !== 4}
+        >
+          Next
+        </button>
+      </div>
+
+      {/* Step 5: Enter Credentials */}
+      <div className={`mb-8 ${step !== 5 && 'opacity-50'}`}>
+        <h3 className="text-lg font-semibold mb-2">Step 5: Enter Your Credentials</h3>
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Access Token</label>
@@ -245,7 +277,7 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
               onChange={(e) => setCredentials(prev => ({ ...prev, access_token: e.target.value }))}
               className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="Enter your permanent access token"
-              disabled={step !== 3}
+              disabled={step !== 5}
             />
           </div>
           <div>
@@ -255,30 +287,36 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
               value={credentials.phone_number_id}
               onChange={(e) => setCredentials(prev => ({ ...prev, phone_number_id: e.target.value }))}
               className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Enter your WhatsApp Phone Number ID"
-              disabled={step !== 3}
+              placeholder="Enter your phone number ID"
+              disabled={step !== 5}
             />
           </div>
+
           {error && (
-            <div className="text-red-600 text-sm">{error}</div>
+            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded">
+              {error}
+            </div>
           )}
+
+          {/* Pricing Information */}
+          <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <h4 className="font-semibold text-blue-800 mb-2">Basic Plan Details</h4>
+            <ul className="text-sm text-blue-700 space-y-1">
+              <li>• Unlimited conversations (Meta fees apply)</li>
+              <li>• Flat rate: 4,000 EGP</li>
+              <li>• Full access to all features</li>
+              <li>• 24/7 support</li>
+            </ul>
+          </div>
+
           <button
             onClick={handleSubmit}
-            disabled={!credentials.access_token || !credentials.phone_number_id || isLoading || step !== 3}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            disabled={isLoading || step !== 5}
+            className="w-full mt-6 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isLoading ? 'Validating...' : 'Complete Setup'}
+            {isLoading ? 'Setting up...' : 'Complete Setup'}
           </button>
         </div>
-      </div>
-
-      <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-        <h4 className="font-medium mb-2">Basic Plan Details:</h4>
-        <ul className="space-y-2 text-sm">
-          <li>• 1000 conversations per month</li>
-          <li>• 2000 EGP monthly</li>
-          <li>• For additional executions, please contact us at <a href="mailto:denoteai.eg@gmail.com" className="text-blue-600 hover:underline">denoteai.eg@gmail.com</a></li>
-        </ul>
       </div>
     </div>
   );

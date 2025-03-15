@@ -20,6 +20,7 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
   const [isHumanAgent, setIsHumanAgent] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [chatStatus, setChatStatus] = useState<string>('open');
+  const [isPaid, setIsPaid] = useState(false);
 
   // Set up real-time listener for chat status
   useEffect(() => {
@@ -67,6 +68,22 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
     return () => unsubscribe();
   }, [contact]);
 
+  // Check if user has paid
+  useEffect(() => {
+    const userUID = getCurrentUser();
+    if (!userUID) return;
+
+    const userRef = doc(db, 'Users', userUID);
+    const unsubscribe = onSnapshot(userRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        setIsPaid(!!data.workflows?.whatsapp_agent?.paid);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   const handleSendMessage = async () => {
     if (!contact || !newMessage.trim() || !isHumanAgent) return;
 
@@ -75,7 +92,7 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
 
     setIsLoading(true);
     try {
-      // Get user's WhatsApp credentials
+      // Get user's WhatsApp credentials and check paid status
       const userRef = doc(db, 'Users', userUID);
       const userDoc = await getDoc(userRef);
       
@@ -85,6 +102,11 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
 
       const userData = userDoc.data();
       const whatsappCredentials = userData.credentials?.whatsappCredentials;
+      const isPaidUser = !!userData.workflows?.whatsapp_agent?.paid;
+      
+      if (!isPaidUser) {
+        throw new Error('Please upgrade to the paid plan to send messages');
+      }
       
       if (!whatsappCredentials?.access_token || !whatsappCredentials?.phone_number_id) {
         throw new Error('WhatsApp credentials not found');
@@ -244,7 +266,26 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 chat-background">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 chat-background relative">
+        {!isPaid && (
+          <div className="absolute inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-10">
+            <div className="bg-white p-6 rounded-lg shadow-lg max-w-md text-center">
+              <h3 className="text-xl font-semibold text-gray-800 mb-2">Upgrade Required</h3>
+              <p className="text-gray-600 mb-4">
+                Please upgrade to our paid plan to view and send messages. The basic plan includes:
+              </p>
+              <ul className="text-left text-gray-600 mb-4 space-y-2">
+                <li>• Unlimited conversations</li>
+                <li>• Full access to all features</li>
+                <li>• 24/7 support</li>
+                <li>• Flat rate: 4,000 EGP</li>
+              </ul>
+              <p className="text-sm text-gray-500">
+                Contact our support team to upgrade your plan.
+              </p>
+            </div>
+          </div>
+        )}
         {messages.map((message) => (
           <div
             key={message.id}
@@ -280,9 +321,15 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
         <div className="relative flex items-center">
           <input
             type="text"
-            placeholder={isHumanAgent ? "Type a message..." : "Message sending is disabled - Enable human agent to send messages"}
+            placeholder={
+              !isPaid 
+                ? "Please upgrade to the paid plan to send messages" 
+                : isHumanAgent 
+                  ? "Type a message..." 
+                  : "Message sending is disabled - Enable human agent to send messages"
+            }
             className={`w-full pr-12 pl-4 py-2 border border-gray-300 rounded-lg ${
-              isHumanAgent 
+              isHumanAgent && isPaid
                 ? 'bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500' 
                 : 'bg-gray-100 text-gray-500 cursor-not-allowed'
             }`}
@@ -294,13 +341,13 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
                 handleSendMessage();
               }
             }}
-            disabled={!isHumanAgent || isLoading}
+            disabled={!isHumanAgent || isLoading || !isPaid}
           />
           <button
             onClick={handleSendMessage}
-            disabled={!isHumanAgent || !newMessage.trim() || isLoading}
+            disabled={!isHumanAgent || !newMessage.trim() || isLoading || !isPaid}
             className={`absolute right-2 p-2 rounded-lg flex items-center justify-center ${
-              isHumanAgent && newMessage.trim()
+              isHumanAgent && newMessage.trim() && isPaid
                 ? 'text-blue-500 hover:text-blue-600'
                 : 'text-gray-400 cursor-not-allowed'
             }`}
