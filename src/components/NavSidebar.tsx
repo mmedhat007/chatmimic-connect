@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MessageSquare, BarChart, Menu, LogOut, Bot, Settings, Users, Send, Grid, Workflow } from 'lucide-react';
+import { MessageSquare, BarChart, Menu, LogOut, Settings, Users, Send, Grid, Workflow } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser } from '../services/firebase';
 

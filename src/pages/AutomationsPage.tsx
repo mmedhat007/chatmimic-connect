@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getCurrentUser } from '../services/firebase';
-import { getAgentConfig, updateAgentConfig } from '../services/supabase';
+import { getAgentConfig, updateAgentConfig, createUserTable, createEmbeddings } from '../services/supabase';
 import NavSidebar from '../components/NavSidebar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -50,40 +50,46 @@ const AutomationsPage = () => {
       if (!userUID) return;
       
       setLoading(true);
-      const data = await getAgentConfig(userUID);
       
-      if (data) {
-        setConfig(data as AgentConfig);
-      } else {
-        // If no config exists, create a default one
-        setConfig({
-          id: 0,
-          company_info: {
-            name: '',
-            industry: '',
-            locations: [],
-            contact_info: '',
-            differentiators: ''
-          },
-          roles: [{ role: 'Answer FAQs', priority: 1 }],
-          communication_style: {
-            tone: 'friendly',
-            emoji_usage: true,
-            response_length: 'medium'
-          },
-          scenarios: [{ name: 'General Inquiry', workflow: 'Respond with general information about the company.' }],
-          knowledge_base: {
-            faq_url: '',
-            product_catalog: ''
-          },
-          compliance_rules: {
-            gdpr_disclaimer: '',
-            forbidden_words: []
-          }
-        });
+      try {
+        const data = await getAgentConfig(userUID);
+        
+        if (data) {
+          setConfig(data as AgentConfig);
+        } else {
+          // If no config exists, create a default one
+          setConfig({
+            id: 0,
+            company_info: {
+              name: '',
+              industry: '',
+              locations: [],
+              contact_info: '',
+              differentiators: ''
+            },
+            roles: [{ role: 'Answer FAQs', priority: 1 }],
+            communication_style: {
+              tone: 'friendly',
+              emoji_usage: true,
+              response_length: 'medium'
+            },
+            scenarios: [{ name: 'General Inquiry', workflow: 'Respond with general information about the company.' }],
+            knowledge_base: {
+              faq_url: '',
+              product_catalog: ''
+            },
+            compliance_rules: {
+              gdpr_disclaimer: '',
+              forbidden_words: []
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching agent config:', error);
+        toast.error('Failed to load agent configuration');
+      } finally {
+        setLoading(false);
       }
-      
-      setLoading(false);
     };
 
     fetchConfig();
@@ -105,9 +111,17 @@ const AutomationsPage = () => {
       });
       
       if (success) {
+        // Create embeddings for the knowledge base
+        try {
+          await createEmbeddings(userUID, JSON.stringify(config));
+        } catch (embeddingsError) {
+          console.error('Error creating embeddings:', embeddingsError);
+          // Don't show an error to the user for this, as it's not critical
+        }
+        
         toast.success('Agent configuration saved successfully');
       } else {
-        toast.error('Failed to save agent configuration');
+        toast.error('Failed to save agent configuration. Please try going through the agent setup process first.');
       }
     } catch (error) {
       console.error('Error saving agent config:', error);
@@ -316,7 +330,12 @@ const AutomationsPage = () => {
       <div className="flex-1 ml-20 p-8 overflow-y-auto">
         <div className="max-w-4xl mx-auto">
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold text-gray-900">WhatsApp AI Agent Configuration</h1>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">WhatsApp AI Agent Configuration</h1>
+              <p className="text-gray-600 mt-2">
+                Edit and customize your agent settings here
+              </p>
+            </div>
             <Button onClick={handleSave} disabled={saving} className="flex items-center gap-2">
               {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               {saving ? 'Saving...' : 'Save Changes'}

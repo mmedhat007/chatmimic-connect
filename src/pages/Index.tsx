@@ -6,7 +6,8 @@ import NavSidebar from '../components/NavSidebar';
 import GoogleSheetsButton from '../components/GoogleSheetsButton';
 import { Contact, Message } from '../types';
 import { useIsMobile } from '../hooks/use-mobile';
-import { getContacts, getMessages } from '../services/firebase';
+import { getContacts, getMessages, getCurrentUser } from '../services/firebase';
+import { getAgentConfig, supabase } from '../services/supabase';
 
 const Index = () => {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -17,6 +18,45 @@ const Index = () => {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
   const location = useLocation();
+  const userUID = getCurrentUser();
+
+  // Check if the user has completed the agent setup
+  useEffect(() => {
+    const checkSetup = async () => {
+      if (!userUID) return;
+      
+      try {
+        // Check if agent config exists
+        const agentConfig = await getAgentConfig(userUID);
+        
+        if (!agentConfig) {
+          // If the agent config doesn't exist, redirect to the agent setup page
+          navigate('/agent-setup');
+          return;
+        }
+        
+        // Check if WhatsApp config exists
+        try {
+          const { data: whatsappConfig } = await supabase
+            .from(`${userUID}_whatsapp_config`)
+            .select('*')
+            .limit(1);
+          
+          if (!whatsappConfig || whatsappConfig.length === 0) {
+            // If WhatsApp config doesn't exist, redirect to WhatsApp setup
+            navigate('/whatsapp-setup');
+            return;
+          }
+        } catch (whatsappError) {
+          console.error('Error checking WhatsApp setup:', whatsappError);
+        }
+      } catch (error) {
+        console.error('Error checking agent setup:', error);
+      }
+    };
+    
+    checkSetup();
+  }, [userUID, navigate]);
 
   // Fetch contacts on component mount
   useEffect(() => {

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { MessageSquare, Facebook, Instagram } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db, getCurrentUser } from '../services/firebase';
-import WhatsAppSetup from '../components/WhatsAppSetup';
 
 const PlatformSelect = () => {
   const navigate = useNavigate();
@@ -11,7 +10,6 @@ const PlatformSelect = () => {
     whatsapp_agent: false,
     meta_agent: false
   });
-  const [showWhatsAppSetup, setShowWhatsAppSetup] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -47,7 +45,7 @@ const PlatformSelect = () => {
     if (workflows.whatsapp_agent) {
       navigate('/');
     } else {
-      setShowWhatsAppSetup(true);
+      navigate('/whatsapp-setup');
     }
   };
 
@@ -55,17 +53,6 @@ const PlatformSelect = () => {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#09659c]"></div>
-      </div>
-    );
-  }
-
-  if (showWhatsAppSetup) {
-    return (
-      <div className="min-h-screen bg-gray-100 p-4">
-        <WhatsAppSetup onComplete={() => {
-          setWorkflows(prev => ({ ...prev, whatsapp_agent: true }));
-          navigate('/');
-        }} />
       </div>
     );
   }
