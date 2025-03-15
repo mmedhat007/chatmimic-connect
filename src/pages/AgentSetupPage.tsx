@@ -1,20 +1,46 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { getCurrentUser } from '../services/firebase';
 import NavSidebar from '../components/NavSidebar';
-import { createClient } from '@supabase/supabase-js';
+import { supabase, createUserTable, createEmbeddings } from '../services/supabase';
+import axios from 'axios';
 
-// Initialize Supabase client
-const supabaseUrl = 'https://kutdbashpuuysxywvzgs.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1dGRiYXNocHV1eXN4eXd2emdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDIwMDEyNjQsImV4cCI6MjA1NzU3NzI2NH0.sPX_kiCkssIG9v1AIoRbdlmnEL-7GCmm_MIxudJyVO8';
-const supabase = createClient(supabaseUrl, supabaseKey);
+// OpenAI API configuration
+// In a production environment, this should be stored securely and called from a backend
+const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || '';
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 
 interface Message {
   id: string;
   text: string;
   sender: 'user' | 'bot';
   timestamp: Date;
+}
+
+interface BusinessInfo {
+  company_info: {
+    name: string;
+    industry: string;
+    locations: string[];
+    contact_info: string;
+    differentiators: string;
+  };
+  roles: { role: string; priority: number }[];
+  communication_style: {
+    tone: string;
+    emoji_usage: boolean;
+    response_length: string;
+  };
+  scenarios: { name: string; workflow: string }[];
+  knowledge_base: {
+    faq_url: string;
+    product_catalog: string;
+  };
+  compliance_rules: {
+    gdpr_disclaimer: string;
+    forbidden_words: string[];
+  };
 }
 
 const AgentSetupPage = () => {
@@ -30,18 +56,59 @@ const AgentSetupPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [setupComplete, setSetupComplete] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const userUID = getCurrentUser();
+  const userUID = getCurrentUser() || 'test_user_123';
   const navigate = useNavigate();
-
-  // Scroll to bottom when messages change
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Track the current question stage
-  const [currentStage, setCurrentStage] = useState('company_name');
+  const location = useLocation();
+  
+  // Track conversation state for OpenAI
+  const [conversationHistory, setConversationHistory] = useState<{role: string, content: string}[]>([
+    {
+      role: "system", 
+      content: `You are a helpful AI assistant guiding a business owner through setting up their WhatsApp AI agent. 
+      Your goal is to collect the following information in a conversational way:
+      1. Company information (name, industry, locations, contact info, differentiators)
+      2. Roles for the AI agent (e.g., answer FAQs, handle complaints)
+      3. Communication style (tone, emoji usage, response length)
+      4. Common scenarios the AI should handle
+      5. Knowledge base resources
+      6. Compliance requirements and forbidden words
+      
+      Start by welcoming them and asking for their business name. Be friendly but professional.
+      After collecting all information, indicate that setup is complete with the text "SETUP_COMPLETE" 
+      followed by a JSON object containing all the collected information in this format:
+      {
+        "company_info": {
+          "name": "",
+          "industry": "",
+          "locations": [],
+          "contact_info": "",
+          "differentiators": ""
+        },
+        "roles": [{"role": "", "priority": 1}],
+        "communication_style": {
+          "tone": "",
+          "emoji_usage": false,
+          "response_length": ""
+        },
+        "scenarios": [{"name": "", "workflow": ""}],
+        "knowledge_base": {
+          "faq_url": "",
+          "product_catalog": ""
+        },
+        "compliance_rules": {
+          "gdpr_disclaimer": "",
+          "forbidden_words": []
+        }
+      }`
+    },
+    {
+      role: "assistant", 
+      content: "👋 Hi! I'm your DenoteAI Business Assistant. I'll help you set up your WhatsApp AI agent by asking a few questions about your business. This will help me understand your needs and customize the agent to best serve your customers.\n\nLet's get started with some basic information about your company. What's your business name?"
+    }
+  ]);
+  
   // Store collected information
-  const [businessInfo, setBusinessInfo] = useState({
+  const [businessInfo, setBusinessInfo] = useState<BusinessInfo>({
     company_info: {
       name: '',
       industry: '',
@@ -66,6 +133,26 @@ const AgentSetupPage = () => {
     }
   });
 
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // If setup is complete, navigate to dashboard
+  useEffect(() => {
+    if (setupComplete) {
+      navigate('/');
+    }
+  }, [setupComplete, navigate]);
+
+  // Log user ID when component mounts
+  useEffect(() => {
+    console.log("AgentSetupPage - Current User UID:", userUID);
+    if (!userUID) {
+      console.warn("No user ID found. User may not be logged in.");
+    }
+  }, [userUID]);
+
   const handleSendMessage = async () => {
     if (!newMessage.trim() || isLoading || !userUID) return;
 
@@ -80,230 +167,181 @@ const AgentSetupPage = () => {
     setNewMessage('');
     setIsLoading(true);
 
-    // Process the user's response based on the current stage
-    processUserResponse(newMessage.trim());
-  };
+    // Add user message to conversation history
+    const updatedHistory = [
+      ...conversationHistory,
+      { role: "user", content: newMessage.trim() }
+    ];
+    setConversationHistory(updatedHistory);
 
-  const processUserResponse = async (response: string) => {
-    // Update business info based on current stage
-    let nextStage = '';
-    let botResponse = '';
+    try {
+      // Call OpenAI API
+      const response = await axios.post(
+        OPENAI_API_URL,
+        {
+          model: "gpt-4o-mini",
+          messages: updatedHistory,
+          temperature: 0.7,
+          max_tokens: 1000
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${OPENAI_API_KEY}`
+          }
+        }
+      );
 
-    switch (currentStage) {
-      case 'company_name':
-        setBusinessInfo(prev => ({
-          ...prev,
-          company_info: { ...prev.company_info, name: response }
-        }));
-        botResponse = `Thanks for sharing that your business name is "${response}"! What industry are you in?`;
-        nextStage = 'industry';
-        break;
+      const botResponse = response.data.choices[0].message.content;
+      
+      // Update conversation history with bot's response
+      setConversationHistory([
+        ...updatedHistory,
+        { role: "assistant", content: botResponse }
+      ]);
 
-      case 'industry':
-        setBusinessInfo(prev => ({
-          ...prev,
-          company_info: { ...prev.company_info, industry: response }
-        }));
-        botResponse = `Great! Now, please tell me about your business location(s). You can list multiple locations separated by commas.`;
-        nextStage = 'locations';
-        break;
-
-      case 'locations':
-        const locations = response.split(',').map(loc => loc.trim());
-        setBusinessInfo(prev => ({
-          ...prev,
-          company_info: { ...prev.company_info, locations }
-        }));
-        botResponse = `Thanks for sharing your location(s). What's the best contact information for your business? (email, phone, etc.)`;
-        nextStage = 'contact_info';
-        break;
-
-      case 'contact_info':
-        setBusinessInfo(prev => ({
-          ...prev,
-          company_info: { ...prev.company_info, contact_info: response }
-        }));
-        botResponse = `What makes your business unique? What are your key differentiators from competitors?`;
-        nextStage = 'differentiators';
-        break;
-
-      case 'differentiators':
-        setBusinessInfo(prev => ({
-          ...prev,
-          company_info: { ...prev.company_info, differentiators: response }
-        }));
-        botResponse = `Now, let's talk about what roles you want your WhatsApp AI agent to fulfill. What are the primary roles? (e.g., answer FAQs, forward leads, handle complaints). Please list them in order of priority.`;
-        nextStage = 'roles';
-        break;
-
-      case 'roles':
-        const rolesList = response.split(',').map((role, index) => ({
-          role: role.trim(),
-          priority: index + 1
-        }));
-        setBusinessInfo(prev => ({
-          ...prev,
-          roles: rolesList
-        }));
-        botResponse = `Great! Now, what tone should your AI agent use when communicating with customers? (e.g., formal, casual, friendly)`;
-        nextStage = 'tone';
-        break;
-
-      case 'tone':
-        setBusinessInfo(prev => ({
-          ...prev,
-          communication_style: { ...prev.communication_style, tone: response }
-        }));
-        botResponse = `Should your AI agent use emojis in responses? (yes/no)`;
-        nextStage = 'emoji_usage';
-        break;
-
-      case 'emoji_usage':
-        const useEmojis = response.toLowerCase() === 'yes' || response.toLowerCase() === 'y';
-        setBusinessInfo(prev => ({
-          ...prev,
-          communication_style: { ...prev.communication_style, emoji_usage: useEmojis }
-        }));
-        botResponse = `How long should the AI agent's responses typically be? (short, medium, or long)`;
-        nextStage = 'response_length';
-        break;
-
-      case 'response_length':
-        setBusinessInfo(prev => ({
-          ...prev,
-          communication_style: { ...prev.communication_style, response_length: response.toLowerCase() }
-        }));
-        botResponse = `What are common scenarios your AI agent should handle? (e.g., product inquiries, complaints, refunds). Please describe one scenario at a time, and I'll ask for more if needed.`;
-        nextStage = 'scenarios';
-        break;
-
-      case 'scenarios':
-        // For simplicity, we'll just add one scenario for now
-        const newScenario = {
-          name: `Scenario ${businessInfo.scenarios.length + 1}`,
-          workflow: response
+      // Check if setup is complete
+      if (botResponse.includes("SETUP_COMPLETE")) {
+        console.log("Setup complete signal received from OpenAI");
+        // Extract the JSON data
+        const jsonMatch = botResponse.match(/SETUP_COMPLETE\s*({[\s\S]*})/);
+        if (jsonMatch && jsonMatch[1]) {
+          try {
+            console.log("Extracted JSON data:", jsonMatch[1]);
+            const extractedData = JSON.parse(jsonMatch[1]);
+            setBusinessInfo(extractedData);
+            
+            // Save to Supabase
+            console.log("Saving data to Supabase...");
+            const saveSuccess = await saveToSupabase(extractedData);
+            console.log("Save to Supabase result:", saveSuccess);
+            
+            // Add a clean version of the message (without the JSON) to the chat
+            const cleanMessage = botResponse.replace(/SETUP_COMPLETE\s*({[\s\S]*})/, 
+              "Thank you for providing all this information! I've saved your preferences and configured your WhatsApp AI agent. You can now access your WhatsApp dashboard and start using your AI agent. You can always update these settings later from the dashboard.");
+            
+            const botMessage: Message = {
+              id: Date.now().toString(),
+              text: cleanMessage,
+              sender: 'bot',
+              timestamp: new Date()
+            };
+            
+            setMessages(prev => [...prev, botMessage]);
+            setSetupComplete(true);
+          } catch (error) {
+            console.error("Error parsing JSON from OpenAI response:", error);
+            // Handle the error gracefully
+            const botMessage: Message = {
+              id: Date.now().toString(),
+              text: "I've collected all the information needed. Let me save your configuration now.",
+              sender: 'bot',
+              timestamp: new Date()
+            };
+            setMessages(prev => [...prev, botMessage]);
+            
+            // Try to save anyway with whatever data we have
+            const saveSuccess = await saveToSupabase(businessInfo);
+            console.log("Fallback save to Supabase result:", saveSuccess);
+            setSetupComplete(true);
+          }
+        } else {
+          console.error("Could not extract JSON data from OpenAI response");
+          const botMessage: Message = {
+            id: Date.now().toString(),
+            text: "I've collected all the information needed, but there was an issue processing it. Let me save what I have.",
+            sender: 'bot',
+            timestamp: new Date()
+          };
+          setMessages(prev => [...prev, botMessage]);
+          
+          // Try to save anyway with whatever data we have
+          const saveSuccess = await saveToSupabase(businessInfo);
+          console.log("Fallback save to Supabase result (no JSON match):", saveSuccess);
+          setSetupComplete(true);
+        }
+      } else {
+        // Regular response
+        const botMessage: Message = {
+          id: Date.now().toString(),
+          text: botResponse,
+          sender: 'bot',
+          timestamp: new Date()
         };
-        setBusinessInfo(prev => ({
-          ...prev,
-          scenarios: [...prev.scenarios, newScenario]
-        }));
-        botResponse = `Do you have any knowledge base resources like FAQs or product catalogs? If yes, please provide URLs or describe them.`;
-        nextStage = 'knowledge_base';
-        break;
-
-      case 'knowledge_base':
-        setBusinessInfo(prev => ({
-          ...prev,
-          knowledge_base: { 
-            faq_url: response.includes('http') ? response : '',
-            product_catalog: response
-          }
-        }));
-        botResponse = `Are there any compliance requirements or disclaimers your AI agent should be aware of? (e.g., GDPR, industry regulations)`;
-        nextStage = 'compliance';
-        break;
-
-      case 'compliance':
-        setBusinessInfo(prev => ({
-          ...prev,
-          compliance_rules: { 
-            ...prev.compliance_rules,
-            gdpr_disclaimer: response 
-          }
-        }));
-        botResponse = `Last question: Are there any words or phrases your AI agent should avoid using? Please list them separated by commas, or type "none" if there aren't any.`;
-        nextStage = 'forbidden_words';
-        break;
-
-      case 'forbidden_words':
-        const forbiddenWords = response.toLowerCase() === 'none' 
-          ? [] 
-          : response.split(',').map(word => word.trim());
-        
-        setBusinessInfo(prev => ({
-          ...prev,
-          compliance_rules: { 
-            ...prev.compliance_rules,
-            forbidden_words: forbiddenWords 
-          }
-        }));
-        
-        // Final stage - save to Supabase and complete
-        await saveToSupabase();
-        
-        botResponse = `Thank you for providing all this information! I've saved your preferences and configured your WhatsApp AI agent. You can now access your WhatsApp dashboard and start using your AI agent. You can always update these settings later from the dashboard.`;
-        nextStage = 'complete';
-        setSetupComplete(true);
-        break;
-
-      case 'complete':
-        // If we're already complete, just navigate to the dashboard
-        navigate('/');
-        return;
-
-      default:
-        botResponse = `I'm not sure what to ask next. Let's go to your dashboard.`;
-        nextStage = 'complete';
-        setSetupComplete(true);
-    }
-
-    // Add bot response
-    setTimeout(() => {
+        setMessages(prev => [...prev, botMessage]);
+      }
+    } catch (error) {
+      console.error("Error calling OpenAI API:", error);
+      // Fallback message
       const botMessage: Message = {
         id: Date.now().toString(),
-        text: botResponse,
+        text: "I'm having trouble processing your request. Please try again or contact support if the issue persists.",
         sender: 'bot',
         timestamp: new Date()
       };
       setMessages(prev => [...prev, botMessage]);
-      setCurrentStage(nextStage);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
-  const saveToSupabase = async () => {
+  const saveToSupabase = async (data: BusinessInfo) => {
     try {
-      if (!userUID) return;
+      console.log("Starting saveToSupabase with userUID:", userUID);
+      if (!userUID) return false;
 
-      // Create a table for the user if it doesn't exist
-      const { error: createTableError } = await supabase.rpc('create_user_table', {
-        uid: userUID
-      });
-
-      if (createTableError) {
-        console.error('Error creating table:', createTableError);
+      // First, check if the user table exists and create it if it doesn't
+      console.log("Checking if table exists for user:", userUID);
+      const tableExists = await createUserTable(userUID);
+      
+      if (!tableExists) {
+        console.error(`Failed to create table for user ${userUID}`);
+        return false;
       }
+      console.log("Table exists or was created successfully for user:", userUID);
 
       // Insert the data into the user's table
+      console.log("Inserting data into table for user:", userUID);
       const { error: insertError } = await supabase
         .from(userUID)
         .insert([
           {
-            company_info: businessInfo.company_info,
-            roles: businessInfo.roles,
-            communication_style: businessInfo.communication_style,
-            scenarios: businessInfo.scenarios,
-            knowledge_base: businessInfo.knowledge_base,
-            compliance_rules: businessInfo.compliance_rules
+            company_info: data.company_info,
+            roles: data.roles,
+            communication_style: data.communication_style,
+            scenarios: data.scenarios,
+            knowledge_base: data.knowledge_base,
+            compliance_rules: data.compliance_rules
           }
         ]);
 
       if (insertError) {
-        console.error('Error inserting data:', insertError);
+        // If we get a specific error about the relation not existing, log it
+        if (insertError.code === '42P01') {
+          console.log(`Table ${userUID} doesn't exist. Please contact support.`);
+          return false;
+        } else {
+          console.error('Error inserting data:', insertError);
+          return false;
+        }
       }
+      console.log("Data inserted successfully for user:", userUID);
 
       // Create embeddings for the knowledge base
-      const { error: embeddingsError } = await supabase.rpc('create_embeddings', {
-        uid: userUID,
-        content: JSON.stringify(businessInfo)
-      });
-
-      if (embeddingsError) {
+      try {
+        console.log("Creating embeddings for user:", userUID);
+        await createEmbeddings(userUID, JSON.stringify(data));
+        console.log("Embeddings created successfully for user:", userUID);
+      } catch (embeddingsError) {
         console.error('Error creating embeddings:', embeddingsError);
+        // Don't return false for this, as it's not critical
       }
 
+      console.log("saveToSupabase completed successfully for user:", userUID);
+      return true;
     } catch (error) {
       console.error('Error saving to Supabase:', error);
+      return false;
     }
   };
 

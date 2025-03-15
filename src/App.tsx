@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { getCurrentUser } from './services/firebase';
+import { Toaster } from 'react-hot-toast';
 import Index from './pages/Index';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -14,6 +15,7 @@ import BroadcastPage from './pages/BroadcastPage';
 import ResetPassword from './pages/ResetPassword';
 import AgentSetupPage from './pages/AgentSetupPage';
 import AutomationsPage from './pages/AutomationsPage';
+import WhatsAppSetup from './pages/WhatsAppSetup';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -32,6 +34,7 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
 const App = () => {
   return (
     <Router>
+      <Toaster position="top-right" />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
@@ -89,6 +92,14 @@ const App = () => {
           element={
             <ProtectedRoute>
               <AgentSetupPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/whatsapp-setup"
+          element={
+            <ProtectedRoute>
+              <WhatsAppSetup />
             </ProtectedRoute>
           }
         />
