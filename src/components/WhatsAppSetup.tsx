@@ -99,8 +99,7 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
           executions_used: 0,
           limit: 1000,
           reset_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
-          paid: false, // Initialize as unpaid
-          setup_completed: false // Track whether AI agent setup is completed
+          paid: false // Initialize as unpaid
         }
       });
 
@@ -163,11 +162,12 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         type: 'auto_reply'
       });
 
-      // Call onComplete to navigate to AI agent setup
+      // Change navigation to agent-setup page after setup
+      navigate('/agent-setup');
       onComplete();
     } catch (error) {
-      console.error('Error in setup:', error);
-      setError('Failed to complete setup. Please try again.');
+      console.error('Error setting up WhatsApp:', error);
+      setError('Failed to save WhatsApp configuration. Please try again.');
     } finally {
       setIsLoading(false);
     }
