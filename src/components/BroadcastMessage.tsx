@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { doc, getDoc, collection, getDocs, addDoc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, addDoc, updateDoc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { db, getCurrentUser } from '../services/firebase';
 import { useToast } from '../hooks/use-toast';
 import * as XLSX from 'xlsx';
-import { Send, Plus, AlertCircle, Check, Trash2 } from 'lucide-react';
+import { Send, Plus, AlertCircle, Check, Trash2, Loader2 } from 'lucide-react';
+import { Button } from '../components/ui/button';
 
 interface Contact {
   phoneNumber: string;
@@ -52,6 +53,7 @@ const BroadcastMessage = () => {
   const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({});
   const [showTemplateForm, setShowTemplateForm] = useState(false);
   const [isDeletingTemplate, setIsDeletingTemplate] = useState(false);
+  const [isPaid, setIsPaid] = useState(false);
   const [newTemplate, setNewTemplate] = useState<Partial<Template>>({
     category: 'UTILITY',
     language: 'en',
@@ -63,6 +65,20 @@ const BroadcastMessage = () => {
   useEffect(() => {
     fetchTagsAndContacts();
     fetchTemplates();
+
+    // Check if user has paid
+    const userUID = getCurrentUser();
+    if (!userUID) return;
+
+    const userRef = doc(db, 'Users', userUID);
+    const unsubscribe = onSnapshot(userRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        setIsPaid(!!data.workflows?.whatsapp_agent?.paid);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const fetchTemplates = async () => {
@@ -352,18 +368,21 @@ const BroadcastMessage = () => {
     if (!selectedTemplate) {
       toast({
         title: "Error",
-        description: "Please select a message template",
+        description: "Please select a template",
         variant: "destructive",
       });
       return;
     }
 
-    const userUID = getCurrentUser();
-    if (!userUID) return;
-
     setIsSending(true);
+
     try {
-      // Get user's WhatsApp credentials
+      const userUID = getCurrentUser();
+      if (!userUID) {
+        throw new Error('No user logged in');
+      }
+
+      // Get user's WhatsApp credentials and check paid status
       const userRef = doc(db, 'Users', userUID);
       const userDoc = await getDoc(userRef);
       
@@ -373,7 +392,12 @@ const BroadcastMessage = () => {
 
       const userData = userDoc.data();
       const whatsappCredentials = userData.credentials?.whatsappCredentials;
+      const isPaidUser = !!userData.workflows?.whatsapp_agent?.paid;
       
+      if (!isPaidUser) {
+        throw new Error('Please upgrade to the paid plan to send broadcast messages');
+      }
+
       if (!whatsappCredentials?.access_token || !whatsappCredentials?.phone_number_id) {
         throw new Error('WhatsApp credentials not found');
       }
@@ -707,23 +731,27 @@ const BroadcastMessage = () => {
       </div>
 
       {/* Send Button */}
-      <button
+      <Button
         onClick={sendBroadcastMessage}
-        disabled={isSending || !selectedTemplate || (selectedContacts.length === 0 && selectedTags.length === 0)}
-        className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        disabled={
+          isSending || 
+          !selectedTemplate || 
+          (selectedContacts.length === 0 && selectedTags.length === 0) ||
+          !isPaid
+        }
+        className="w-full"
       >
         {isSending ? (
-          <>
-            <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+          <div className="flex items-center">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             Sending...
-          </>
+          </div>
+        ) : !isPaid ? (
+          "Upgrade to send broadcast messages"
         ) : (
-          <>
-            <Send size={16} />
-            Send Broadcast Message
-          </>
+          "Send Broadcast"
         )}
-      </button>
+      </Button>
 
       {/* Template Creation Modal */}
       {showTemplateForm && (
