@@ -533,3 +533,67 @@ export const resetPassword = async (email: string) => {
     throw error;
   }
 };
+
+/**
+ * Update WhatsApp agent configuration in Firebase
+ */
+export const updateWhatsAppAgentConfig = async (
+  uid: string,
+  config: {
+    enabled: boolean;
+    executionLimit: number;
+  }
+): Promise<void> => {
+  try {
+    const userRef = doc(db, 'Users', uid);
+    
+    await updateDoc(userRef, {
+      'workflows.whatsapp_agent': {
+        enabled: config.enabled,
+        limit: config.executionLimit,
+        usage: 0 // Reset usage when updating configuration
+      }
+    });
+  } catch (error) {
+    console.error('Error updating WhatsApp agent config:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get WhatsApp agent configuration from Firebase
+ */
+export const getWhatsAppAgentConfig = async (uid: string): Promise<{
+  enabled: boolean;
+  limit: number;
+  usage: number;
+} | null> => {
+  try {
+    const userRef = doc(db, 'Users', uid);
+    const userDoc = await getDoc(userRef);
+    
+    if (!userDoc.exists()) {
+      return null;
+    }
+    
+    const userData = userDoc.data();
+    const whatsappAgent = userData.workflows?.whatsapp_agent;
+    
+    if (!whatsappAgent) {
+      return {
+        enabled: false,
+        limit: 100,
+        usage: 0
+      };
+    }
+    
+    return {
+      enabled: whatsappAgent.enabled || false,
+      limit: whatsappAgent.limit || 100,
+      usage: whatsappAgent.usage || 0
+    };
+  } catch (error) {
+    console.error('Error getting WhatsApp agent config:', error);
+    throw error;
+  }
+};
