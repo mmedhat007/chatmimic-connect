@@ -1,4 +1,5 @@
-import { supabase, createUserTable } from './supabase';
+// Placeholder API service without Supabase
+// This file contains mock implementations of the API functions
 
 // Update WhatsApp configuration
 export const updateWhatsAppConfig = async (
@@ -11,33 +12,8 @@ export const updateWhatsAppConfig = async (
   }
 ) => {
   try {
-    // Check if the user table exists
-    const tableExists = await createUserTable(uid);
-    
-    if (!tableExists) {
-      return { 
-        error: { 
-          code: '42P01', 
-          message: 'User table does not exist. Please complete the agent setup first.' 
-        } 
-      };
-    }
-    
-    // Try to insert the WhatsApp configuration
-    const { error } = await supabase
-      .from(`${uid}_whatsapp_config`)
-      .upsert([{
-        phone_number_id: config.phone_number_id,
-        whatsapp_business_account_id: config.whatsapp_business_account_id,
-        access_token: config.access_token,
-        verify_token: config.verify_token,
-        updated_at: new Date().toISOString()
-      }], { onConflict: 'id' });
-    
-    if (error) {
-      console.error('Error updating WhatsApp config:', error);
-      return { error };
-    }
+    console.log('Mock: Updating WhatsApp config for user', uid, config);
+    // In a real implementation, this would save to a database
     
     return { success: true };
   } catch (error) {
@@ -54,31 +30,20 @@ export const updateWhatsAppConfig = async (
 // Get WhatsApp configuration
 export const getWhatsAppConfig = async (uid: string) => {
   try {
-    // Check if the user table exists
-    const tableExists = await createUserTable(uid);
+    console.log('Mock: Getting WhatsApp config for user', uid);
+    // In a real implementation, this would fetch from a database
     
-    if (!tableExists) {
-      return { 
-        error: { 
-          code: '42P01', 
-          message: 'User table does not exist. Please complete the agent setup first.' 
-        } 
-      };
-    }
-    
-    // Try to get the WhatsApp configuration
-    const { data, error } = await supabase
-      .from(`${uid}_whatsapp_config`)
-      .select('*')
-      .order('updated_at', { ascending: false })
-      .limit(1);
-    
-    if (error) {
-      console.error('Error getting WhatsApp config:', error);
-      return { error };
-    }
-    
-    return { data: data && data.length > 0 ? data[0] : null };
+    // Return mock data
+    return { 
+      data: {
+        id: 1,
+        phone_number_id: 'mock_phone_number_id',
+        whatsapp_business_account_id: 'mock_whatsapp_business_account_id',
+        access_token: 'mock_access_token',
+        verify_token: 'mock_verify_token',
+        updated_at: new Date().toISOString()
+      } 
+    };
   } catch (error) {
     console.error('Error in getWhatsAppConfig:', error);
     return { 

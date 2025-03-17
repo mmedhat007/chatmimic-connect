@@ -3,7 +3,6 @@ import { Send } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getCurrentUser } from '../services/firebase';
 import NavSidebar from '../components/NavSidebar';
-import { supabase, createUserTable, createEmbeddings } from '../services/supabase';
 import axios from 'axios';
 
 // OpenAI API configuration
@@ -25,29 +24,121 @@ interface BusinessInfo {
     locations: string[];
     contact_info: string;
     differentiators: string;
+    industry_specific: {
+      // Real Estate
+      property_types?: string[];
+      coverage_areas?: string[];
+      key_features?: string[];
+      viewing_process?: string;
+      price_policy?: string;
+      document_requirements?: string[];
+      
+      // Retail/Supermarket
+      operating_hours?: string;
+      delivery_options?: {
+        areas: string[];
+        minimum_order?: number;
+        delivery_fee?: number;
+      };
+      return_policy?: string;
+      loyalty_program?: {
+        enabled: boolean;
+        details?: string;
+      };
+      bulk_order_policy?: string;
+      
+      // Restaurant
+      menu_categories?: string[];
+      dietary_options?: string[];
+      reservation_policy?: string;
+      delivery_radius?: number;
+      catering_services?: {
+        available: boolean;
+        minimum_notice?: number;
+        minimum_order?: number;
+      };
+      peak_hours?: string[];
+      order_modification_policy?: string;
+    };
   };
-  roles: { role: string; priority: number }[];
+  roles: { 
+    role: string; 
+    priority: number;
+  }[];
   communication_style: {
     tone: string;
     emoji_usage: boolean;
     response_length: string;
   };
-  scenarios: { name: string; workflow: string }[];
+  scenarios: { 
+    name: string; 
+    workflow: string;
+  }[];
   knowledge_base: {
     faq_url: string;
     product_catalog: string;
+    industry_resources: {
+      name: string;
+      url: string;
+      type: string;
+    }[];
   };
   compliance_rules: {
     gdpr_disclaimer: string;
     forbidden_words: string[];
+    industry_regulations: {
+      name: string;
+      description: string;
+      required_disclaimers?: string[];
+    }[];
   };
 }
+
+// Function to generate industry-specific structure
+const generateIndustryStructure = async (industry: string): Promise<any> => {
+  try {
+    const response = await axios.post(
+      OPENAI_API_URL,
+      {
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI expert in business operations. Generate a minimal set of essential information points for a WhatsApp AI agent. Focus only on the most important aspects that customers typically ask about.`
+          },
+          {
+            role: "user",
+            content: `Generate a simple JSON structure for a ${industry} business with only the most essential fields:
+            {
+              "data_fields": { top 3 most important fields only },
+              "customer_queries": [ top 3 most common questions ],
+              "operations": { top 2 key operations },
+              "compliance": [ only if legally required ]
+            }`
+          }
+        ],
+        temperature: 0.7
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        }
+      }
+    );
+
+    return JSON.parse(response.data.choices[0].message.content);
+  } catch (error) {
+    console.error('Error generating industry structure:', error);
+    return null;
+  }
+};
 
 const AgentSetupPage = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome-message',
-      text: "👋 Hi! I'm your DenoteAI Business Assistant. I'll help you set up your WhatsApp AI agent by asking a few questions about your business. This will help me understand your needs and customize the agent to best serve your customers.\n\nLet's get started with some basic information about your company. What's your business name?",
+      text: "👋 Hi! This is a test version of the DenoteAI WhatsApp Bot Configurator. Just type anything and hit send to complete the setup with test data for a real estate business. No need to answer any questions!",
       sender: 'bot',
       timestamp: new Date()
     }
@@ -60,61 +151,107 @@ const AgentSetupPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   
+  // Track industry structure
+  const [industryStructure, setIndustryStructure] = useState<any>(null);
+
   // Track conversation state for OpenAI
   const [conversationHistory, setConversationHistory] = useState<{role: string, content: string}[]>([
     {
       role: "system", 
-      content: `You are a helpful AI assistant guiding a business owner through setting up their WhatsApp AI agent. 
-      Your goal is to collect the following information in a conversational way:
-      1. Company information (name, industry, locations, contact info, differentiators)
-      2. Roles for the AI agent (e.g., answer FAQs, handle complaints)
-      3. Communication style (tone, emoji usage, response length)
-      4. Common scenarios the AI should handle
-      5. Knowledge base resources
-      6. Compliance requirements and forbidden words
+      content: `You are an AI assistant specialized in configuring WhatsApp messaging bots for businesses. Your goal is to gather information that will optimize how the bot behaves and responds to customers.
+
+      IMPORTANT GUIDELINES:
+      - Adapt your questions based on the business type provided (e.g., real estate, retail, restaurant)
+      - Once you know the business type, ask ONLY industry-specific questions relevant to that business
+      - Never ask generic questions that could apply to any business after learning their industry
+      - Focus on questions that directly impact messaging capabilities and customer experience
+      - Prioritize questions about communication style, customer handling, and common scenarios
+      - Be efficient - don't ask for information that isn't relevant to messaging behavior
+      - Ask 1-2 focused questions per message
+      - If the user has already provided information, don't ask for it again
       
-      Start by welcoming them and asking for their business name. Be friendly but professional.
-      After collecting all information, indicate that setup is complete with the text "SETUP_COMPLETE" 
-      followed by a JSON object containing all the collected information in this format:
+      CONTEXT AWARENESS:
+      - For real estate: Focus on property types, viewing processes, document requirements
+      - For retail: Focus on product availability, returns, delivery options
+      - For restaurants: Focus on reservations, menu options, delivery radius
+      - For other industries: Adapt questions to be specifically relevant to that industry
+      
+      PRIORITIZE THESE CATEGORIES OF QUESTIONS:
+      
+      1. Customer Interaction Style:
+         - Preferred tone (formal, casual, friendly, professional)
+         - Response length (concise, detailed)
+         - Use of emojis or multimedia
+         - Personalization level
+         - Languages supported
+      
+      2. Common Customer Scenarios:
+         - Frequently asked questions and ideal responses
+         - How to handle complaints or difficult customers
+         - Booking/appointment processes
+         - Sales inquiries handling
+         - After-hours communication policy
+      
+      3. Business-Specific Automation:
+         - Key information that should be provided automatically
+         - When to escalate to a human agent
+         - Qualification questions for leads
+         - Follow-up timing and frequency
+         - Integration with business processes
+      
+      4. Compliance & Boundaries:
+         - Topics the bot should avoid
+         - Required disclaimers or legal text
+         - Privacy handling procedures
+         - Information collection limitations
+      
+      After collecting sufficient information to configure an effective messaging bot, indicate that setup is complete with the text "SETUP_COMPLETE" followed by a JSON object containing all the collected information in this format:
       {
         "company_info": {
           "name": "",
           "industry": "",
+          "website": "",
           "locations": [],
-          "contact_info": "",
-          "differentiators": ""
+          "contact_info": ""
         },
-        "roles": [{"role": "", "priority": 1}],
+        "services": {
+          "main_offerings": [],
+          "special_features": []
+        },
         "communication_style": {
           "tone": "",
+          "languages": [],
           "emoji_usage": false,
           "response_length": ""
         },
-        "scenarios": [{"name": "", "workflow": ""}],
-        "knowledge_base": {
-          "faq_url": "",
-          "product_catalog": ""
+        "business_processes": {
+          "common_questions": [],
+          "special_requirements": []
         },
-        "compliance_rules": {
-          "gdpr_disclaimer": "",
-          "forbidden_words": []
+        "integrations": {
+          "required_integrations": [],
+          "automation_preferences": "",
+          "lead_process": ""
         }
-      }`
+      }
+
+      Start by asking for their business name and type/industry. Then immediately focus on how they want their WhatsApp bot to communicate with customers based on their specific industry.`
     },
     {
       role: "assistant", 
-      content: "👋 Hi! I'm your DenoteAI Business Assistant. I'll help you set up your WhatsApp AI agent by asking a few questions about your business. This will help me understand your needs and customize the agent to best serve your customers.\n\nLet's get started with some basic information about your company. What's your business name?"
+      content: "👋 Hi! I'm your DenoteAI WhatsApp Bot Configurator. Let's set up your messaging bot to perfectly match your business needs.\n\n1. What's your business name?\n2. What industry or business type are you in? (For example: real estate, retail, restaurant, etc.)"
     }
   ]);
   
-  // Store collected information
+  // Store collected information with industry-specific fields
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>({
     company_info: {
       name: '',
       industry: '',
       locations: [] as string[],
       contact_info: '',
-      differentiators: ''
+      differentiators: '',
+      industry_specific: {}
     },
     roles: [] as { role: string, priority: number }[],
     communication_style: {
@@ -125,11 +262,13 @@ const AgentSetupPage = () => {
     scenarios: [] as { name: string, workflow: string }[],
     knowledge_base: {
       faq_url: '',
-      product_catalog: ''
+      product_catalog: '',
+      industry_resources: []
     },
     compliance_rules: {
       gdpr_disclaimer: '',
-      forbidden_words: [] as string[]
+      forbidden_words: [] as string[],
+      industry_regulations: []
     }
   });
 
@@ -157,7 +296,7 @@ const AgentSetupPage = () => {
     if (!newMessage.trim() || isLoading || !userUID) return;
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: `user-${Date.now().toString()}`,
       text: newMessage.trim(),
       sender: 'user',
       timestamp: new Date()
@@ -167,114 +306,68 @@ const AgentSetupPage = () => {
     setNewMessage('');
     setIsLoading(true);
 
-    // Add user message to conversation history
-    const updatedHistory = [
-      ...conversationHistory,
-      { role: "user", content: newMessage.trim() }
-    ];
-    setConversationHistory(updatedHistory);
-
     try {
-      // Call OpenAI API
-      const response = await axios.post(
-        OPENAI_API_URL,
-        {
-          model: "gpt-4o-mini",
-          messages: updatedHistory,
-          temperature: 0.7,
-          max_tokens: 1000
+      // Skip the OpenAI call and immediately complete setup with test data
+      const testData = {
+        company_info: {
+          name: "UpWest Real Estate",
+          industry: "Real Estate",
+          website: "https://upwest-realestate.com",
+          locations: ["Cairo", "Alexandria", "New Cairo"],
+          contact_info: "sales@upwest-realestate.com | +20 123 456 7890"
         },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${OPENAI_API_KEY}`
-          }
+        services: {
+          main_offerings: ["Residential Properties", "Commercial Properties", "Property Management", "Investment Consulting"],
+          special_features: ["Virtual Tours", "3D Floor Plans", "Property Valuation", "Mortgage Assistance"]
+        },
+        communication_style: {
+          tone: "Professional yet friendly",
+          languages: ["English", "Arabic"],
+          emoji_usage: true,
+          response_length: "Balanced - detailed for property info, concise for general inquiries"
+        },
+        business_processes: {
+          common_questions: [
+            "What properties are available in New Cairo?", 
+            "How do I schedule a viewing?", 
+            "What documents are required for purchase?",
+            "Do you offer payment plans?",
+            "What are the prices for units in UpWest Compound?"
+          ],
+          special_requirements: [
+            "ID verification required for viewings",
+            "Pre-qualification for mortgage inquiries",
+            "Appointment scheduling for property tours"
+          ]
+        },
+        integrations: {
+          required_integrations: ["Calendar", "CRM", "Document Signing"],
+          automation_preferences: "High automation for initial inquiries, human handoff for serious buyers",
+          lead_process: "Collect contact details, property preferences, budget range, and timeline before human agent follows up"
         }
-      );
+      };
 
-      const botResponse = response.data.choices[0].message.content;
+      // Add a success message to the chat
+      const botMessage: Message = {
+        id: `bot-${Date.now().toString()}`,
+        text: "Thank you for setting up your UpWest Real Estate WhatsApp AI agent! 🏢🔑\n\nYour agent is now configured to handle property inquiries, schedule viewings, and collect lead information for your team. The agent will communicate in both English and Arabic with a professional yet friendly tone.\n\nYou can now access your WhatsApp dashboard and start engaging with potential clients. Your AI agent will automatically handle initial inquiries and transfer serious buyers to your sales team.",
+        sender: 'bot',
+        timestamp: new Date()
+      };
       
-      // Update conversation history with bot's response
-      setConversationHistory([
-        ...updatedHistory,
-        { role: "assistant", content: botResponse }
-      ]);
-
-      // Check if setup is complete
-      if (botResponse.includes("SETUP_COMPLETE")) {
-        console.log("Setup complete signal received from OpenAI");
-        // Extract the JSON data
-        const jsonMatch = botResponse.match(/SETUP_COMPLETE\s*({[\s\S]*})/);
-        if (jsonMatch && jsonMatch[1]) {
-          try {
-            console.log("Extracted JSON data:", jsonMatch[1]);
-            const extractedData = JSON.parse(jsonMatch[1]);
-            setBusinessInfo(extractedData);
-            
-            // Save to Supabase
-            console.log("Saving data to Supabase...");
-            const saveSuccess = await saveToSupabase(extractedData);
-            console.log("Save to Supabase result:", saveSuccess);
-            
-            // Add a clean version of the message (without the JSON) to the chat
-            const cleanMessage = botResponse.replace(/SETUP_COMPLETE\s*({[\s\S]*})/, 
-              "Thank you for providing all this information! I've saved your preferences and configured your WhatsApp AI agent. You can now access your WhatsApp dashboard and start using your AI agent. You can always update these settings later from the dashboard.");
-            
-            const botMessage: Message = {
-              id: Date.now().toString(),
-              text: cleanMessage,
-              sender: 'bot',
-              timestamp: new Date()
-            };
-            
-            setMessages(prev => [...prev, botMessage]);
-            setSetupComplete(true);
-          } catch (error) {
-            console.error("Error parsing JSON from OpenAI response:", error);
-            // Handle the error gracefully
-            const botMessage: Message = {
-              id: Date.now().toString(),
-              text: "I've collected all the information needed. Let me save your configuration now.",
-              sender: 'bot',
-              timestamp: new Date()
-            };
-            setMessages(prev => [...prev, botMessage]);
-            
-            // Try to save anyway with whatever data we have
-            const saveSuccess = await saveToSupabase(businessInfo);
-            console.log("Fallback save to Supabase result:", saveSuccess);
-            setSetupComplete(true);
-          }
-        } else {
-          console.error("Could not extract JSON data from OpenAI response");
-          const botMessage: Message = {
-            id: Date.now().toString(),
-            text: "I've collected all the information needed, but there was an issue processing it. Let me save what I have.",
-            sender: 'bot',
-            timestamp: new Date()
-          };
-          setMessages(prev => [...prev, botMessage]);
-          
-          // Try to save anyway with whatever data we have
-          const saveSuccess = await saveToSupabase(businessInfo);
-          console.log("Fallback save to Supabase result (no JSON match):", saveSuccess);
-          setSetupComplete(true);
-        }
-      } else {
-        // Regular response
-        const botMessage: Message = {
-          id: Date.now().toString(),
-          text: botResponse,
-          sender: 'bot',
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, botMessage]);
-      }
+      setMessages(prev => [...prev, botMessage]);
+      
+      // Save to Supabase
+      console.log("Saving test data to Supabase...");
+      const saveSuccess = await saveToSupabase(userUID, testData);
+      console.log("Save to Supabase result:", saveSuccess);
+      
+      setSetupComplete(true);
     } catch (error) {
-      console.error("Error calling OpenAI API:", error);
+      console.error("Error in test setup:", error);
       // Fallback message
       const botMessage: Message = {
-        id: Date.now().toString(),
+        id: `error-${Date.now().toString()}`,
         text: "I'm having trouble processing your request. Please try again or contact support if the issue persists.",
         sender: 'bot',
         timestamp: new Date()
@@ -285,62 +378,26 @@ const AgentSetupPage = () => {
     }
   };
 
-  const saveToSupabase = async (data: BusinessInfo) => {
+  // Save to local storage instead of Supabase
+  const saveToSupabase = async (uid: string, config: any) => {
+    console.log('Starting mock save with UID:', uid);
+    
+    if (!uid) {
+      console.error('No UID provided to mock save function');
+      return false;
+    }
+    
     try {
-      console.log("Starting saveToSupabase with userUID:", userUID);
-      if (!userUID) return false;
-
-      // First, check if the user table exists and create it if it doesn't
-      console.log("Checking if table exists for user:", userUID);
-      const tableExists = await createUserTable(userUID);
+      // Save to localStorage as a simple alternative
+      localStorage.setItem(`user_${uid}_config`, JSON.stringify(config));
+      console.log('Successfully saved config to localStorage');
       
-      if (!tableExists) {
-        console.error(`Failed to create table for user ${userUID}`);
-        return false;
-      }
-      console.log("Table exists or was created successfully for user:", userUID);
-
-      // Insert the data into the user's table
-      console.log("Inserting data into table for user:", userUID);
-      const { error: insertError } = await supabase
-        .from(userUID)
-        .insert([
-          {
-            company_info: data.company_info,
-            roles: data.roles,
-            communication_style: data.communication_style,
-            scenarios: data.scenarios,
-            knowledge_base: data.knowledge_base,
-            compliance_rules: data.compliance_rules
-          }
-        ]);
-
-      if (insertError) {
-        // If we get a specific error about the relation not existing, log it
-        if (insertError.code === '42P01') {
-          console.log(`Table ${userUID} doesn't exist. Please contact support.`);
-          return false;
-        } else {
-          console.error('Error inserting data:', insertError);
-          return false;
-        }
-      }
-      console.log("Data inserted successfully for user:", userUID);
-
-      // Create embeddings for the knowledge base
-      try {
-        console.log("Creating embeddings for user:", userUID);
-        await createEmbeddings(userUID, JSON.stringify(data));
-        console.log("Embeddings created successfully for user:", userUID);
-      } catch (embeddingsError) {
-        console.error('Error creating embeddings:', embeddingsError);
-        // Don't return false for this, as it's not critical
-      }
-
-      console.log("saveToSupabase completed successfully for user:", userUID);
+      // Mock the embeddings save
+      console.log('Mock: Processing embeddings for vector search');
+      
       return true;
     } catch (error) {
-      console.error('Error saving to Supabase:', error);
+      console.error('Error in mock save function:', error);
       return false;
     }
   };
