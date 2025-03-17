@@ -7,7 +7,20 @@ import GoogleSheetsButton from '../components/GoogleSheetsButton';
 import { Contact, Message } from '../types';
 import { useIsMobile } from '../hooks/use-mobile';
 import { getContacts, getMessages, getCurrentUser } from '../services/firebase';
-import { getAgentConfig, supabase } from '../services/supabase';
+
+// Mock function to replace Supabase
+const getAgentConfig = async (uid: string) => {
+  // Try to get from localStorage first
+  const storedConfig = localStorage.getItem(`user_${uid}_config`);
+  if (storedConfig) {
+    try {
+      return JSON.parse(storedConfig);
+    } catch (e) {
+      console.error('Error parsing stored config:', e);
+    }
+  }
+  return null;
+};
 
 const Index = () => {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -35,20 +48,12 @@ const Index = () => {
           return;
         }
         
-        // Check if WhatsApp config exists
-        try {
-          const { data: whatsappConfig } = await supabase
-            .from(`${userUID}_whatsapp_config`)
-            .select('*')
-            .limit(1);
-          
-          if (!whatsappConfig || whatsappConfig.length === 0) {
-            // If WhatsApp config doesn't exist, redirect to WhatsApp setup
-            navigate('/whatsapp-setup');
-            return;
-          }
-        } catch (whatsappError) {
-          console.error('Error checking WhatsApp setup:', whatsappError);
+        // Check if WhatsApp config exists (mock implementation)
+        const whatsappConfig = localStorage.getItem(`user_${userUID}_whatsapp_config`);
+        if (!whatsappConfig) {
+          // If WhatsApp config doesn't exist, redirect to WhatsApp setup
+          navigate('/whatsapp-setup');
+          return;
         }
       } catch (error) {
         console.error('Error checking agent setup:', error);

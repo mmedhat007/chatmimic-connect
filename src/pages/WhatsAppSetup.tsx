@@ -3,8 +3,21 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { updateWhatsAppConfig } from '../services/api';
 import { auth } from '../services/firebase';
-import { getAgentConfig } from '../services/supabase';
 import NavSidebar from '../components/NavSidebar';
+
+// Mock function to replace Supabase
+const getAgentConfig = async (uid: string) => {
+  // Try to get from localStorage first
+  const storedConfig = localStorage.getItem(`user_${uid}_config`);
+  if (storedConfig) {
+    try {
+      return JSON.parse(storedConfig);
+    } catch (e) {
+      console.error('Error parsing stored config:', e);
+    }
+  }
+  return null;
+};
 
 const WhatsAppSetup: React.FC = () => {
   const navigate = useNavigate();
