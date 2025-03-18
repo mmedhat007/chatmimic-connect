@@ -1,8 +1,35 @@
-# Welcome to your Lovable project
+# Welcome to ChatMimic Connect
 
 ## Project info
 
 **URL**: https://lovable.dev/projects/cc292d52-f917-488b-b1ce-98dfd75b5b1a
+
+## Supabase Integration
+
+This project uses Supabase for storing user configurations and embeddings. Follow these steps to set up the Supabase integration:
+
+1. Check the [Supabase Setup Guide](docs/SUPABASE_SETUP.md) for detailed instructions.
+2. Run the SQL scripts in the `sql/migrations` directory to set up the necessary tables and functions.
+3. Make sure your environment variables are set correctly in `.env` or `.env.local`.
+
+### Required Environment Variables
+
+```
+VITE_SUPABASE_URL=https://kutdbashpuuysxywvzgs.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+VITE_OPENAI_API_KEY=your_openai_api_key
+```
+
+### Database Tables
+
+The application uses the following Supabase tables:
+
+1. `user_configs` - Stores user configuration data for the WhatsApp AI agent
+2. `user_embeddings` - Stores embeddings for semantic search
+
+### Vector Embeddings
+
+This project uses OpenAI's `text-embedding-3-small` model to create embeddings for user configurations. These embeddings are stored in Supabase for semantic search and retrieval in n8n workflows.
 
 ## How can I edit this code?
 

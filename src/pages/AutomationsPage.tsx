@@ -9,45 +9,11 @@ import { Textarea } from '../components/ui/textarea';
 import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { PlusCircle, Trash2, Save, RefreshCw } from 'lucide-react';
+import { PlusCircle, Trash2, Save, RefreshCw, AlertTriangle } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { getUserConfig, saveUserConfig, updateEmbeddings, checkEmbeddingsAvailable } from '../services/supabase';
 
-// Mock functions to replace Supabase
-const getAgentConfig = async (uid: string) => {
-  // Try to get from localStorage first
-  const storedConfig = localStorage.getItem(`user_${uid}_config`);
-  if (storedConfig) {
-    try {
-      return JSON.parse(storedConfig);
-    } catch (e) {
-      console.error('Error parsing stored config:', e);
-    }
-  }
-  return null;
-};
-
-const updateAgentConfig = async (uid: string, id: number, updates: any) => {
-  try {
-    // Get existing config
-    const storedConfig = localStorage.getItem(`user_${uid}_config`);
-    let config = storedConfig ? JSON.parse(storedConfig) : { id };
-    
-    // Update with new values
-    config = { ...config, ...updates };
-    
-    // Save back to localStorage
-    localStorage.setItem(`user_${uid}_config`, JSON.stringify(config));
-    return true;
-  } catch (e) {
-    console.error('Error updating config:', e);
-    return false;
-  }
-};
-
-const saveEmbeddings = async (uid: string, content: string, queryName: string) => {
-  console.log('Mock: Saving embeddings for', uid, queryName);
-  return true;
-};
+// Mock functions to replace Supabase - replaced with actual Supabase functions
 
 interface AgentConfig {
   id: number;
@@ -93,7 +59,18 @@ const AutomationsPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState<AgentConfig | null>(null);
+  const [embeddingsAvailable, setEmbeddingsAvailable] = useState<boolean | null>(null);
   const userUID = getCurrentUser();
+
+  // Check if embeddings are available
+  useEffect(() => {
+    const checkEmbeddings = async () => {
+      const available = await checkEmbeddingsAvailable();
+      setEmbeddingsAvailable(available);
+    };
+    
+    checkEmbeddings();
+  }, []);
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -102,7 +79,7 @@ const AutomationsPage = () => {
       setLoading(true);
       
       try {
-        const data = await getAgentConfig(userUID);
+        const data = await getUserConfig(userUID);
         
         if (data) {
           setConfig(data as AgentConfig);
@@ -165,21 +142,53 @@ const AutomationsPage = () => {
     setSaving(true);
     
     try {
-      const success = await updateAgentConfig(userUID, config.id, {
-        company_info: config.company_info,
-        services: config.services,
-        communication_style: config.communication_style,
-        business_processes: config.business_processes,
-        integrations: config.integrations
-      });
+      // Save config to Supabase (now just temperature and max_tokens)
+      const success = await saveUserConfig(userUID, config);
       
       if (success) {
-        // Create embeddings for the knowledge base
-        try {
-          await saveEmbeddings(userUID, JSON.stringify(config), 'agent_config');
-        } catch (embeddingsError) {
-          console.error('Error creating embeddings:', embeddingsError);
-          // Don't show an error to the user for this, as it's not critical
+        // Only attempt to update embeddings if they're available
+        if (embeddingsAvailable) {
+          try {
+            // Update embeddings for different sections with metadata
+            await updateEmbeddings(
+              userUID, 
+              JSON.stringify(config.company_info), 
+              'company_info'
+            );
+            
+            // Services embeddings
+            await updateEmbeddings(
+              userUID,
+              JSON.stringify(config.services),
+              'services'
+            );
+            
+            // Communication style embeddings
+            await updateEmbeddings(
+              userUID,
+              JSON.stringify(config.communication_style),
+              'communication_style'
+            );
+            
+            // Business processes embeddings
+            await updateEmbeddings(
+              userUID,
+              JSON.stringify(config.business_processes),
+              'business_processes'
+            );
+            
+            // Complete config embeddings
+            await updateEmbeddings(
+              userUID,
+              JSON.stringify(config),
+              'complete_config'
+            );
+          } catch (embeddingsError) {
+            console.error('Error updating embeddings:', embeddingsError);
+            // Don't show an error to the user for this, as it's not critical
+          }
+        } else {
+          console.warn('Skipping embeddings update as they are not available');
         }
         
         toast.success('Agent configuration saved successfully');
@@ -410,9 +419,19 @@ const AutomationsPage = () => {
             </Button>
           </div>
           
-          <p className="text-gray-600 mb-8">
+          <p className="text-gray-600 mb-4">
             Customize how your WhatsApp AI agent interacts with your customers. Changes will be applied immediately after saving.
           </p>
+          
+          {/* Show warning if embeddings are not available */}
+          {embeddingsAvailable === false && (
+            <div className="mb-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start">
+              <AlertTriangle className="text-yellow-500 mr-3 mt-0.5" size={18} />
+              <p className="text-sm text-yellow-700">
+                OpenAI embeddings are not available. Your configuration will be saved, but advanced search features may be limited.
+              </p>
+            </div>
+          )}
           
           <Tabs defaultValue="company">
             <TabsList className="mb-6">
