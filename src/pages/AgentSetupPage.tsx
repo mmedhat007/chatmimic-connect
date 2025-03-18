@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send } from 'lucide-react';
+import { Send, AlertTriangle } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getCurrentUser } from '../services/firebase';
 import NavSidebar from '../components/NavSidebar';
 import axios from 'axios';
+import { saveUserConfig, createEmbeddings, checkEmbeddingsAvailable } from '../services/supabase';
+import { toast } from 'react-hot-toast';
 
 // OpenAI API configuration
 // In a production environment, this should be stored securely and called from a backend
@@ -153,6 +155,7 @@ const AgentSetupPage = () => {
   
   // Track industry structure
   const [industryStructure, setIndustryStructure] = useState<any>(null);
+  const [embeddingsAvailable, setEmbeddingsAvailable] = useState<boolean | null>(null);
 
   // Track conversation state for OpenAI
   const [conversationHistory, setConversationHistory] = useState<{role: string, content: string}[]>([
@@ -292,6 +295,26 @@ const AgentSetupPage = () => {
     }
   }, [userUID]);
 
+  // Check if embeddings are available
+  useEffect(() => {
+    const checkEmbeddings = async () => {
+      const available = await checkEmbeddingsAvailable();
+      setEmbeddingsAvailable(available);
+      
+      if (!available) {
+        toast(
+          "OpenAI embeddings are not available. The app will still work, but some search features may be limited.",
+          { 
+            duration: 6000,
+            icon: '⚠️'
+          }
+        );
+      }
+    };
+    
+    checkEmbeddings();
+  }, []);
+
   const handleSendMessage = async () => {
     if (!newMessage.trim() || isLoading || !userUID) return;
 
@@ -358,7 +381,7 @@ const AgentSetupPage = () => {
       setMessages(prev => [...prev, botMessage]);
       
       // Save to Supabase
-      console.log("Saving test data to Supabase...");
+      console.log("Saving data to Supabase...");
       const saveSuccess = await saveToSupabase(userUID, testData);
       console.log("Save to Supabase result:", saveSuccess);
       
@@ -378,26 +401,83 @@ const AgentSetupPage = () => {
     }
   };
 
-  // Save to local storage instead of Supabase
+  // Save to Supabase
   const saveToSupabase = async (uid: string, config: any) => {
-    console.log('Starting mock save with UID:', uid);
+    console.log('Starting Supabase save with UID:', uid);
     
     if (!uid) {
-      console.error('No UID provided to mock save function');
+      console.error('No UID provided to save function');
       return false;
     }
     
     try {
-      // Save to localStorage as a simple alternative
-      localStorage.setItem(`user_${uid}_config`, JSON.stringify(config));
-      console.log('Successfully saved config to localStorage');
+      // Save configuration to Supabase (now just stores temperature and max_tokens)
+      // Determine values based on the config
+      const saveResult = await saveUserConfig(uid, config);
       
-      // Mock the embeddings save
-      console.log('Mock: Processing embeddings for vector search');
+      if (!saveResult) {
+        console.error('Failed to save configuration to Supabase');
+        return false;
+      }
+      
+      console.log('Successfully saved config to Supabase');
+      
+      // Only attempt to create embeddings if they're available
+      if (embeddingsAvailable) {
+        try {
+          // Create embeddings for different sections with metadata
+          // Company info embeddings
+          await createEmbeddings(
+            uid, 
+            JSON.stringify(config.company_info), 
+            'company_info',
+            { section: 'company_info', type: 'configuration' }
+          );
+          
+          // Services embeddings
+          await createEmbeddings(
+            uid,
+            JSON.stringify(config.services),
+            'services',
+            { section: 'services', type: 'configuration' }
+          );
+          
+          // Communication style embeddings
+          await createEmbeddings(
+            uid,
+            JSON.stringify(config.communication_style),
+            'communication_style',
+            { section: 'communication_style', type: 'configuration' }
+          );
+          
+          // Business processes embeddings
+          await createEmbeddings(
+            uid,
+            JSON.stringify(config.business_processes),
+            'business_processes',
+            { section: 'business_processes', type: 'configuration' }
+          );
+          
+          // Complete config embeddings
+          await createEmbeddings(
+            uid,
+            JSON.stringify(config),
+            'complete_config',
+            { section: 'complete', type: 'configuration' }
+          );
+          
+          console.log('Successfully created embeddings');
+        } catch (embeddingError) {
+          console.error('Error creating embeddings:', embeddingError);
+          // Continue anyway, as embeddings are not critical for core functionality
+        }
+      } else {
+        console.warn('Skipping embeddings creation as they are not available');
+      }
       
       return true;
     } catch (error) {
-      console.error('Error in mock save function:', error);
+      console.error('Error in Supabase save function:', error);
       return false;
     }
   };
@@ -416,6 +496,16 @@ const AgentSetupPage = () => {
             <p className="text-lg text-gray-600">
               Design your perfect WhatsApp AI assistant that understands your business needs. Answer the questions below to customize your AI agent.
             </p>
+            
+            {/* Show warning if embeddings are not available */}
+            {embeddingsAvailable === false && (
+              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start">
+                <AlertTriangle className="text-yellow-500 mr-3 mt-0.5" size={18} />
+                <p className="text-sm text-yellow-700">
+                  OpenAI embeddings are not available. Your configuration will be saved, but advanced search features may be limited.
+                </p>
+              </div>
+            )}
           </div>
           <div className="h-[600px] bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
             {/* Chat Header */}

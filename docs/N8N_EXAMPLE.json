@@ -1,0 +1,162 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "functionCode": "// This node creates a test object with a user ID\n// In a real workflow, this would come from the WhatsApp message\nreturn {\n  userId: 'test_user_123',  // Replace with your test Firebase UID\n  userMessage: 'What properties do you have in New Cairo?'\n};"
+      },
+      "id": "8f41b045-fcc4-4be0-b3a0-de8d7ee75bba",
+      "name": "Test Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM match_documents(\n  'user_id={{$json[\"userId\"]}}',\n  5,\n  null\n);",
+        "additionalFields": {}
+      },
+      "id": "9a638e0c-8523-4db8-b2e1-a9c158a5a9a6",
+      "name": "Query User Documents",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "1",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.queryResult.length }}",
+              "operation": "notEqual",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "0a45ca0c-9c9a-4ee8-acb8-b4e24427ea6d",
+      "name": "IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract the contents of the matched documents\nconst results = $input.item.json.queryResult;\nlet formattedResults = '';\n\nif (results && results.length > 0) {\n  // Create a formatted string with the results\n  formattedResults = 'I found these relevant items:\\n\\n';\n  \n  for (const result of results) {\n    try {\n      // Try to parse the content as JSON\n      const content = JSON.parse(result.content);\n      \n      // Add formatted content\n      formattedResults += `📌 ${result.query_name}\\n`;\n      \n      // Add key information based on the type of content\n      if (content.name) formattedResults += `Name: ${content.name}\\n`;\n      if (content.industry) formattedResults += `Industry: ${content.industry}\\n`;\n      if (content.locations && content.locations.length > 0) {\n        formattedResults += `Locations: ${content.locations.join(', ')}\\n`;\n      }\n      \n      formattedResults += `\\n`;\n    } catch (e) {\n      // If it's not JSON, just use the raw content\n      formattedResults += `📌 ${result.query_name}\\n${result.content}\\n\\n`;\n    }\n  }\n} else {\n  formattedResults = 'I couldn\\'t find any relevant information. Please try asking in a different way.';\n}\n\nreturn {\n  response: formattedResults\n};"
+      },
+      "id": "7be42125-92c6-4b51-ae6a-e03fdc72553d",
+      "name": "Format Results",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        900,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Create a default response when no matches found\nreturn {\n  response: \"I don't have specific information about that in my knowledge base. Could you please try asking about something else?\"\n};"
+      },
+      "id": "76bae77f-c38c-434f-888e-a6c1e8e9f27e",
+      "name": "Default Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        900,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Display the final response that would be sent to the user\nconsole.log('Response to user:', $input.item.json.response);\n\n// In a real implementation, this would send the message via WhatsApp\nreturn {\n  success: true,\n  finalResponse: $input.item.json.response\n};"
+      },
+      "id": "3a551d45-2a80-4a7c-98bf-e80b9ce3c0c6",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Test Data": {
+      "main": [
+        [
+          {
+            "node": "Query User Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query User Documents": {
+      "main": [
+        [
+          {
+            "node": "IF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF": {
+      "main": [
+        [
+          {
+            "node": "Format Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Default Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Results": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+} 
