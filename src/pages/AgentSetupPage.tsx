@@ -422,6 +422,10 @@ const AgentSetupPage = () => {
       
       console.log('Successfully saved config to Supabase');
       
+      // Save the full configuration to localStorage to avoid repeated setup prompts
+      localStorage.setItem(`user_${uid}_config`, JSON.stringify(config));
+      console.log('Saved full config to localStorage');
+      
       // Only attempt to create embeddings if they're available
       if (embeddingsAvailable) {
         try {
@@ -483,6 +487,16 @@ const AgentSetupPage = () => {
   };
 
   const handleContinueToDashboard = () => {
+    // Add a temporary empty WhatsApp config to localStorage to avoid immediate redirect
+    // Users can still access WhatsApp setup from the dashboard when they're ready
+    if (userUID) {
+      const emptyWhatsAppConfig = {
+        setup_deferred: true,
+        timestamp: new Date().toISOString()
+      };
+      localStorage.setItem(`user_${userUID}_whatsapp_config`, JSON.stringify(emptyWhatsAppConfig));
+      console.log('Saved temporary WhatsApp config to prevent immediate redirect');
+    }
     navigate('/');
   };
 

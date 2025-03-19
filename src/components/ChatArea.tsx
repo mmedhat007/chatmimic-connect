@@ -1,26 +1,106 @@
 import { useRef, useEffect, useState } from 'react';
 import { Contact, Message } from '../types';
-import { ArrowLeft, Send } from 'lucide-react';
+import { ArrowLeft, Send, User, ChevronDown, CheckCircle, Flame, DollarSign, Inbox, ServerCrash } from 'lucide-react';
 import { formatTimestamp } from '../services/firebase';
 import AgentControls from './AgentControls';
 import TagControls from './TagControls';
 import { doc, collection, addDoc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
-import { db, getCurrentUser } from '../services/firebase';
+import { db, getCurrentUser, updateContactField, getStageNames } from '../services/firebase';
+
+// Define default lifecycle stages with icons and colors
+const defaultLifecycleStages = [
+  {
+    id: 'new_lead',
+    name: 'New Lead',
+    icon: <Inbox className="w-4 h-4 text-blue-600" />,
+    color: 'bg-blue-100 text-blue-600'
+  },
+  {
+    id: 'vip_lead',
+    name: 'VIP Lead',
+    icon: <CheckCircle className="w-4 h-4 text-indigo-600" />,
+    color: 'bg-indigo-100 text-indigo-600'
+  },
+  {
+    id: 'hot_lead',
+    name: 'Hot Lead',
+    icon: <Flame className="w-4 h-4 text-orange-600" />,
+    color: 'bg-orange-100 text-orange-600'
+  },
+  {
+    id: 'payment',
+    name: 'Payment',
+    icon: <DollarSign className="w-4 h-4 text-yellow-600" />,
+    color: 'bg-yellow-100 text-yellow-600'
+  },
+  {
+    id: 'customer',
+    name: 'Customer',
+    icon: <User className="w-4 h-4 text-green-600" />,
+    color: 'bg-green-100 text-green-600'
+  },
+  {
+    id: 'cold_lead',
+    name: 'Cold Lead',
+    icon: <ServerCrash className="w-4 h-4 text-red-600" />,
+    color: 'bg-red-100 text-red-600'
+  }
+];
 
 interface ChatAreaProps {
   contact: Contact | null;
   messages: Message[];
-  onBack: () => void;
-  isMobile: boolean;
+  onBack?: () => void;
+  isMobile?: boolean;
+  onViewLifecycle?: () => void;
+  onUpdateContactStatus?: (contactId: string, status: 'new_lead' | 'vip_lead' | 'hot_lead' | 'payment' | 'customer' | 'cold_lead') => void;
 }
 
-const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
+const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpdateContactStatus }: ChatAreaProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const [newMessage, setNewMessage] = useState('');
   const [isHumanAgent, setIsHumanAgent] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [chatStatus, setChatStatus] = useState<string>('open');
   const [isPaid, setIsPaid] = useState(false);
+  const [showLifecycleDropdown, setShowLifecycleDropdown] = useState(false);
+  const [customStageNames, setCustomStageNames] = useState<{[key: string]: string}>({});
+  
+  // Combined lifecycle stages with custom names
+  const lifecycleStages = defaultLifecycleStages.map(stage => ({
+    ...stage,
+    name: customStageNames[stage.id] || stage.name
+  }));
+
+  // Fetch custom stage names
+  useEffect(() => {
+    const fetchCustomStageNames = async () => {
+      const names = await getStageNames();
+      if (names) {
+        setCustomStageNames(names);
+      }
+    };
+    
+    fetchCustomStageNames();
+  }, []);
+
+  // Click-away listener for dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowLifecycleDropdown(false);
+      }
+    };
+
+    // Add event listener
+    document.addEventListener('mousedown', handleClickOutside);
+    
+    // Cleanup
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   // Set up real-time listener for chat status
   useEffect(() => {
@@ -210,6 +290,46 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
     }
   };
 
+  // Helper function to update lifecycle stage
+  const updateLifecycleStage = async (stageId: 'new_lead' | 'vip_lead' | 'hot_lead' | 'payment' | 'customer' | 'cold_lead') => {
+    if (!contact) return;
+    
+    try {
+      // If parent component provided an update function, use it for better state synchronization
+      if (onUpdateContactStatus) {
+        onUpdateContactStatus(contact.phoneNumber, stageId);
+      } else {
+        // Fallback to direct update if no parent handler is provided
+        await updateContactField(contact.phoneNumber, 'lifecycle', stageId);
+      }
+      
+      setShowLifecycleDropdown(false);
+    } catch (error) {
+      console.error('Error updating lifecycle stage:', error);
+    }
+  };
+
+  // Function to get the current lifecycle stage display
+  const getCurrentLifecycleStage = () => {
+    if (!contact || !contact.lifecycle) return 'Set Stage';
+    const stage = lifecycleStages.find(s => s.id === contact.lifecycle);
+    return stage ? stage.name : 'Set Stage';
+  };
+
+  // Function to get the current lifecycle stage color
+  const getCurrentLifecycleColor = () => {
+    if (!contact || !contact.lifecycle) return 'bg-gray-100 text-gray-600';
+    const stage = lifecycleStages.find(s => s.id === contact.lifecycle);
+    return stage ? stage.color : 'bg-gray-100 text-gray-600';
+  };
+
+  // Function to get the current lifecycle stage icon
+  const getCurrentLifecycleIcon = () => {
+    if (!contact || !contact.lifecycle) return <User className="w-4 h-4 text-gray-500" />;
+    const stage = lifecycleStages.find(s => s.id === contact.lifecycle);
+    return stage ? stage.icon : <User className="w-4 h-4 text-gray-500" />;
+  };
+
   if (!contact) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50">
@@ -227,39 +347,89 @@ const ChatArea = ({ contact, messages, onBack, isMobile }: ChatAreaProps) => {
     <div className="h-full flex flex-col bg-gray-50">
       {/* Chat Header */}
       <div className="bg-white border-b px-4 py-3">
-        <div className="flex items-center">
-          {isMobile && (
-            <button
-              onClick={onBack}
-              className="mr-4 text-gray-600 hover:text-gray-900"
-            >
-              <ArrowLeft size={24} />
-            </button>
-          )}
+        <div className="flex items-center justify-between">
           <div className="flex items-center">
+            {isMobile && (
+              <button
+                onClick={onBack}
+                className="mr-4 text-gray-600 hover:text-gray-900"
+              >
+                <ArrowLeft size={24} />
+              </button>
+            )}
             <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-white">
               {contact.phoneNumber[0]}
             </div>
-            <div className="ml-3 flex items-center gap-3">
+            <div className="ml-3">
               <div className="font-medium">{contact.phoneNumber}</div>
-              <TagControls phoneNumber={contact.phoneNumber} />
-              <button
-                onClick={toggleChatStatus}
-                className={`px-2 py-0.5 text-xs rounded-full font-medium transition-colors ${
-                  chatStatus === 'open'
-                    ? 'bg-green-100 text-green-800 hover:bg-green-200'
-                    : chatStatus === 'closed'
-                    ? 'bg-red-100 text-red-800 hover:bg-red-200'
-                    : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
-                }`}
-              >
-                {chatStatus || 'Set Status'}
-              </button>
+              <div className="text-sm text-gray-500">
+                {contact.contactName || 'No contact name'}
+              </div>
             </div>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            {/* Lifecycle Stage Dropdown */}
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setShowLifecycleDropdown(!showLifecycleDropdown)}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium ${getCurrentLifecycleColor()}`}
+              >
+                <span className="flex items-center gap-1.5">
+                  {getCurrentLifecycleIcon()}
+                  {getCurrentLifecycleStage()}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 ml-1" />
+              </button>
+              
+              {showLifecycleDropdown && (
+                <div className="absolute right-0 mt-1 bg-white border rounded-md shadow-lg z-10 w-48">
+                  <div className="py-1">
+                    {lifecycleStages.map((stage) => (
+                      <button
+                        key={stage.id}
+                        className={`flex items-center w-full px-3 py-2 text-sm text-left hover:bg-gray-50 ${
+                          contact.lifecycle === stage.id ? 'bg-gray-50' : ''
+                        }`}
+                        onClick={() => updateLifecycleStage(stage.id as 'new_lead' | 'vip_lead' | 'hot_lead' | 'payment' | 'customer' | 'cold_lead')}
+                      >
+                        <div className={`flex items-center justify-center w-5 h-5 rounded-md mr-2 ${stage.color.split(' ')[0]}`}>
+                          {stage.icon}
+                        </div>
+                        <span>{stage.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            {/* Lifecycle view button - for mobile */}
+            {isMobile && onViewLifecycle && (
+              <button
+                onClick={onViewLifecycle}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
+                title="View Contact Details"
+              >
+                <User className="w-5 h-5" />
+              </button>
+            )}
+            
+            <TagControls phoneNumber={contact.phoneNumber} />
+            
+            <button
+              onClick={toggleChatStatus}
+              className={`px-2 py-0.5 text-xs rounded-full font-medium transition-colors ${
+                chatStatus === 'open'
+                  ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                  : 'bg-red-100 text-red-800 hover:bg-red-200'
+              }`}
+            >
+              {chatStatus === 'open' ? 'Open' : 'Closed'}
+            </button>
           </div>
         </div>
         
-        {/* Controls Section */}
         <div className="mt-3">
           <AgentControls phoneNumber={contact.phoneNumber} />
         </div>
