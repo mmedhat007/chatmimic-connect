@@ -218,13 +218,12 @@ const trackWhatsAppExecution = async (userUID: string, phoneNumber: string, mess
       lastMessageTime = message.timestamp;
     }
 
-    // Update the workflow data in Firestore
+    // Update only specific fields instead of replacing the entire object
+    // This preserves all other fields like 'paid' and 'setup_completed'
     await updateDoc(userRef, {
-      'workflows.whatsapp_agent': {
-        executions_used: workflowData.executions_used || 0,
-        limit: workflowData.limit || 1000,
-        reset_date: workflowData.reset_date || new Date(now + 30 * 24 * 60 * 60 * 1000)
-      }
+      'workflows.whatsapp_agent.executions_used': workflowData.executions_used || 0,
+      'workflows.whatsapp_agent.limit': workflowData.limit || 1000,
+      'workflows.whatsapp_agent.reset_date': workflowData.reset_date || new Date(now + 30 * 24 * 60 * 60 * 1000)
     });
 
   } catch (error) {
@@ -530,6 +529,135 @@ export const resetPassword = async (email: string) => {
     await firebaseSendPasswordResetEmail(auth, email);
   } catch (error) {
     console.error('Error sending password reset email:', error);
+    throw error;
+  }
+};
+
+/**
+ * Updates a specific field for a contact
+ * @param phoneNumber The phone number of the contact to update
+ * @param field The field to update
+ * @param value The new value for the field
+ * @returns Promise that resolves when the update is complete
+ */
+export const updateContactField = async (phoneNumber: string, field: string, value: any) => {
+  try {
+    const uid = getCurrentUser();
+    if (!uid) throw new Error('User not authenticated');
+
+    const contactRef = doc(db, 'Whatsapp_Data', uid, 'chats', phoneNumber);
+    
+    // Create an update object with just the field to update
+    const updateData = {
+      [field]: value
+    };
+    
+    await updateDoc(contactRef, updateData);
+    console.log(`Updated ${field} for contact ${phoneNumber}`);
+    return true;
+  } catch (error) {
+    console.error('Error updating contact field:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get custom stage names from Firebase
+ * @returns Promise that resolves with the stage names object or null if not found
+ */
+export const getStageNames = async () => {
+  try {
+    const uid = getCurrentUser();
+    if (!uid) throw new Error('User not authenticated');
+
+    const userRef = doc(db, 'Users', uid);
+    const userDoc = await getDoc(userRef);
+    
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      return userData.stageNames || null;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error getting stage names:', error);
+    return null;
+  }
+};
+
+/**
+ * Update a custom stage name
+ * @param stageId The ID of the stage to update
+ * @param newName The new name for the stage
+ * @returns Promise that resolves when the update is complete
+ */
+export const updateStageName = async (stageId: string, newName: string) => {
+  try {
+    const uid = getCurrentUser();
+    if (!uid) throw new Error('User not authenticated');
+
+    const userRef = doc(db, 'Users', uid);
+    const userDoc = await getDoc(userRef);
+    
+    let stageNames = {};
+    
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      stageNames = userData.stageNames || {};
+    }
+    
+    // Update the stage name
+    stageNames = {
+      ...stageNames,
+      [stageId]: newName
+    };
+    
+    // Save back to Firebase
+    await updateDoc(userRef, {
+      stageNames
+    });
+    
+    console.log(`Updated stage name for ${stageId} to ${newName}`);
+    return true;
+  } catch (error) {
+    console.error('Error updating stage name:', error);
+    throw error;
+  }
+};
+
+/**
+ * Reset a stage name to its default by removing it from the custom names
+ * @param stageId The ID of the stage to reset
+ * @returns Promise that resolves when the update is complete
+ */
+export const resetStageName = async (stageId: string) => {
+  try {
+    const uid = getCurrentUser();
+    if (!uid) throw new Error('User not authenticated');
+
+    const userRef = doc(db, 'Users', uid);
+    const userDoc = await getDoc(userRef);
+    
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      const stageNames = userData.stageNames || {};
+      
+      // Create a copy of the object without the stage to reset
+      const updatedStageNames = { ...stageNames };
+      delete updatedStageNames[stageId];
+      
+      // Save back to Firebase
+      await updateDoc(userRef, {
+        stageNames: updatedStageNames
+      });
+      
+      console.log(`Reset stage name for ${stageId} to default`);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Error resetting stage name:', error);
     throw error;
   }
 };

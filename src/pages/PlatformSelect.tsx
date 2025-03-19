@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MessageSquare, Facebook, Instagram } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
@@ -42,9 +42,11 @@ const PlatformSelect = () => {
   }, [navigate]);
 
   const handleWhatsAppClick = () => {
+    // Check if agent is already set up
     if (workflows.whatsapp_agent) {
       navigate('/');
     } else {
+      // Go to WhatsApp setup first
       navigate('/whatsapp-setup');
     }
   };

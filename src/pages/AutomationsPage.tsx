@@ -79,10 +79,73 @@ const AutomationsPage = () => {
       setLoading(true);
       
       try {
-        const data = await getUserConfig(userUID);
+        // First, try to get config from localStorage
+        const storedConfig = localStorage.getItem(`user_${userUID}_config`);
+        let parsedConfig = null;
         
-        if (data) {
-          setConfig(data as AgentConfig);
+        if (storedConfig) {
+          try {
+            parsedConfig = JSON.parse(storedConfig);
+            console.log('Retrieved config from localStorage:', parsedConfig);
+          } catch (e) {
+            console.error('Error parsing stored config:', e);
+            // Continue to get from Supabase if localStorage parsing fails
+          }
+        }
+        
+        // If not in localStorage, get from Supabase
+        if (!parsedConfig) {
+          const data = await getUserConfig(userUID);
+          
+          if (data) {
+            parsedConfig = data;
+          }
+        }
+        
+        if (parsedConfig) {
+          // Transform the data if needed to match expected format
+          const formattedConfig: AgentConfig = {
+            id: parsedConfig.id || 0,
+            company_info: parsedConfig.company_info || {
+              name: '',
+              industry: '',
+              locations: [],
+              contact_info: '',
+              differentiators: '',
+              website: '',
+              mission: '',
+              target_audience: '',
+              operating_hours: '',
+              response_time: ''
+            },
+            services: parsedConfig.services || {
+              main_offerings: [],
+              pricing_info: '',
+              delivery_areas: [],
+              special_features: []
+            },
+            communication_style: parsedConfig.communication_style || {
+              tone: 'friendly',
+              languages: ['English'],
+              emoji_usage: true,
+              response_length: 'medium'
+            },
+            business_processes: parsedConfig.business_processes || {
+              booking_process: '',
+              refund_policy: '',
+              common_questions: [],
+              special_requirements: []
+            },
+            integrations: parsedConfig.integrations || {
+              current_tools: [],
+              required_integrations: [],
+              automation_preferences: '',
+              lead_process: ''
+            }
+          };
+          
+          setConfig(formattedConfig);
+          console.log('Formatted config for Automations page:', formattedConfig);
         } else {
           // If no config exists, create a default one
           setConfig({
@@ -126,78 +189,121 @@ const AutomationsPage = () => {
           });
         }
       } catch (error) {
-        console.error('Error fetching agent config:', error);
-        toast.error('Failed to load agent configuration');
+        console.error('Error fetching configuration:', error);
+        // Set default config on error
+        setConfig({
+          id: 0,
+          company_info: {
+            name: '',
+            industry: '',
+            website: '',
+            mission: '',
+            target_audience: '',
+            locations: [],
+            operating_hours: '',
+            contact_info: '',
+            response_time: '',
+            differentiators: ''
+          },
+          services: {
+            main_offerings: [],
+            pricing_info: '',
+            delivery_areas: [],
+            special_features: []
+          },
+          communication_style: {
+            tone: 'friendly',
+            languages: ['English'],
+            emoji_usage: true,
+            response_length: 'medium'
+          },
+          business_processes: {
+            booking_process: '',
+            refund_policy: '',
+            common_questions: [],
+            special_requirements: []
+          },
+          integrations: {
+            current_tools: [],
+            required_integrations: [],
+            automation_preferences: '',
+            lead_process: ''
+          }
+        });
       } finally {
         setLoading(false);
       }
     };
-
+    
     fetchConfig();
   }, [userUID]);
 
   const handleSave = async () => {
-    if (!userUID || !config) return;
+    if (!config || !userUID) return;
     
     setSaving(true);
     
     try {
-      // Save config to Supabase (now just temperature and max_tokens)
-      const success = await saveUserConfig(userUID, config);
+      // Save configuration to Supabase
+      const saveResult = await saveUserConfig(userUID, config);
       
-      if (success) {
-        // Only attempt to update embeddings if they're available
-        if (embeddingsAvailable) {
-          try {
-            // Update embeddings for different sections with metadata
-            await updateEmbeddings(
-              userUID, 
-              JSON.stringify(config.company_info), 
-              'company_info'
-            );
-            
-            // Services embeddings
-            await updateEmbeddings(
-              userUID,
-              JSON.stringify(config.services),
-              'services'
-            );
-            
-            // Communication style embeddings
-            await updateEmbeddings(
-              userUID,
-              JSON.stringify(config.communication_style),
-              'communication_style'
-            );
-            
-            // Business processes embeddings
-            await updateEmbeddings(
-              userUID,
-              JSON.stringify(config.business_processes),
-              'business_processes'
-            );
-            
-            // Complete config embeddings
-            await updateEmbeddings(
-              userUID,
-              JSON.stringify(config),
-              'complete_config'
-            );
-          } catch (embeddingsError) {
-            console.error('Error updating embeddings:', embeddingsError);
-            // Don't show an error to the user for this, as it's not critical
-          }
-        } else {
-          console.warn('Skipping embeddings update as they are not available');
-        }
-        
-        toast.success('Agent configuration saved successfully');
-      } else {
-        toast.error('Failed to save agent configuration. Please try going through the agent setup process first.');
+      if (!saveResult) {
+        throw new Error('Failed to save configuration');
       }
+      
+      // Also save to localStorage for faster access
+      localStorage.setItem(`user_${userUID}_config`, JSON.stringify(config));
+      
+      // Only attempt to update embeddings if they're available
+      if (embeddingsAvailable) {
+        try {
+          // Update embeddings for different sections with metadata
+          // Company info embeddings
+          await updateEmbeddings(
+            userUID, 
+            JSON.stringify(config.company_info), 
+            'company_info'
+          );
+          
+          // Services embeddings
+          await updateEmbeddings(
+            userUID,
+            JSON.stringify(config.services),
+            'services'
+          );
+          
+          // Communication style embeddings
+          await updateEmbeddings(
+            userUID,
+            JSON.stringify(config.communication_style),
+            'communication_style'
+          );
+          
+          // Business processes embeddings
+          await updateEmbeddings(
+            userUID,
+            JSON.stringify(config.business_processes),
+            'business_processes'
+          );
+          
+          // Complete config embeddings
+          await updateEmbeddings(
+            userUID,
+            JSON.stringify(config),
+            'complete_config'
+          );
+          
+          console.log('Successfully updated embeddings');
+        } catch (embeddingError) {
+          console.error('Error updating embeddings:', embeddingError);
+          // Continue anyway, as embeddings are not critical for core functionality
+        }
+      }
+      
+      toast.success('Agent configuration saved successfully!');
     } catch (error) {
-      console.error('Error saving agent config:', error);
-      toast.error('An error occurred while saving');
+      console.error('Error saving configuration:', error);
+      toast.error('Failed to save agent configuration');
     } finally {
       setSaving(false);
     }

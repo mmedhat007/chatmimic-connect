@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { Contact } from '../types';
-import { Search } from 'lucide-react';
+import { Search, Filter } from 'lucide-react';
 import { formatTimestamp } from '../services/firebase';
 
 interface SidebarProps {
   contacts: Contact[];
   activeContact: Contact | null;
   onSelectContact: (contact: Contact) => void;
+  lifecycleFilter?: string | null;
 }
 
-const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => {
+const Sidebar = ({ contacts, activeContact, onSelectContact, lifecycleFilter }: SidebarProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'open' | 'closed'>('all');
 
@@ -18,12 +19,29 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
     .filter(contact => {
       const matchesSearch = 
         contact.phoneNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (contact.contactName && contact.contactName.toLowerCase().includes(searchTerm.toLowerCase())) ||
         contact.lastMessage.toLowerCase().includes(searchTerm.toLowerCase());
       
       const matchesStatus = selectedStatus === 'all' || contact.status === selectedStatus;
       
       return matchesSearch && matchesStatus;
     });
+
+  // Get the name of the current lifecycle filter
+  const getLifecycleFilterName = () => {
+    if (!lifecycleFilter) return null;
+    switch (lifecycleFilter) {
+      case 'new_lead': return 'New Lead';
+      case 'vip_lead': return 'VIP Lead';
+      case 'hot_lead': return 'Hot Lead';
+      case 'payment': return 'Payment';
+      case 'customer': return 'Customer';
+      case 'cold_lead': return 'Cold Lead';
+      default: return lifecycleFilter;
+    }
+  };
+
+  const lifecycleFilterName = getLifecycleFilterName();
 
   return (
     <div className="h-full flex flex-col bg-white">
@@ -40,6 +58,16 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
           <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
         </div>
       </div>
+
+      {/* Active Filter Badge */}
+      {lifecycleFilterName && (
+        <div className="px-4 py-2 border-b flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-blue-500" />
+            <span className="text-sm font-medium">Filter: {lifecycleFilterName}</span>
+          </div>
+        </div>
+      )}
 
       {/* Filters Section */}
       <div className="p-4 border-b flex-shrink-0">
@@ -80,72 +108,101 @@ const Sidebar = ({ contacts, activeContact, onSelectContact }: SidebarProps) => 
 
       {/* Contacts List */}
       <div className="flex-1 overflow-y-auto">
-        {filteredContacts.map((contact) => (
-          <div
-            key={contact.phoneNumber}
-            className={`flex items-start p-4 cursor-pointer hover:bg-gray-100 ${
-              activeContact?.phoneNumber === contact.phoneNumber ? 'bg-gray-100' : ''
-            }`}
-            onClick={() => onSelectContact(contact)}
-          >
-            <div 
-              className="w-12 h-12 flex-shrink-0 bg-gray-300 rounded-full flex items-center justify-center text-white text-lg"
-            >
-              {contact.phoneNumber[0]}
-            </div>
-            <div className="ml-4 flex-1 min-w-0">
-              <div className="flex justify-between items-start gap-2">
-                <span className="font-medium truncate">
-                  {contact.phoneNumber}
-                </span>
-                <div className="flex items-center gap-2">
-                  {/* Agent Status */}
-                  {(contact.humanAgent || contact.agentStatus === 'on') && (
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        contact.humanAgent
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-green-100 text-green-800'
-                      }`}
-                    >
-                      {contact.humanAgent ? 'Human' : 'AI'}
-                    </span>
-                  )}
-                  {/* Chat Status */}
-                  {contact.status && (
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        contact.status === 'open'
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-red-100 text-red-800'
-                      }`}
-                    >
-                      {contact.status}
-                    </span>
-                  )}
-                  <span className="text-sm text-gray-500 flex-shrink-0">
-                    {formatTimestamp(contact.lastMessageTime)}
-                  </span>
-                </div>
-              </div>
-              <div className="text-sm text-gray-500 truncate max-w-full">
-                {contact.lastMessage}
-              </div>
-              {contact.tags && contact.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {contact.tags.map(tag => (
-                    <span
-                      key={tag}
-                      className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
+        {filteredContacts.length === 0 ? (
+          <div className="p-6 text-center text-gray-500">
+            <p>No contacts found</p>
+            {lifecycleFilterName && (
+              <p className="mt-2 text-sm">Try clearing the {lifecycleFilterName} filter</p>
+            )}
           </div>
-        ))}
+        ) : (
+          filteredContacts.map((contact) => (
+            <div
+              key={contact.phoneNumber}
+              className={`flex items-start p-4 cursor-pointer hover:bg-gray-100 ${
+                activeContact?.phoneNumber === contact.phoneNumber ? 'bg-gray-100' : ''
+              }`}
+              onClick={() => onSelectContact(contact)}
+            >
+              <div 
+                className="w-12 h-12 flex-shrink-0 bg-gray-300 rounded-full flex items-center justify-center text-white text-lg"
+              >
+                {contact.phoneNumber[0]}
+              </div>
+              <div className="ml-4 flex-1 min-w-0">
+                <div className="flex justify-between items-start gap-2">
+                  <span className="font-medium truncate">
+                    {contact.contactName || contact.phoneNumber}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {/* Lifecycle Badge */}
+                    {contact.lifecycle && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        contact.lifecycle === 'new_lead' ? 'bg-blue-100 text-blue-800' :
+                        contact.lifecycle === 'vip_lead' ? 'bg-indigo-100 text-indigo-800' :
+                        contact.lifecycle === 'hot_lead' ? 'bg-orange-100 text-orange-800' :
+                        contact.lifecycle === 'payment' ? 'bg-yellow-100 text-yellow-800' :
+                        contact.lifecycle === 'customer' ? 'bg-green-100 text-green-800' :
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {contact.lifecycle === 'new_lead' ? 'New' :
+                         contact.lifecycle === 'vip_lead' ? 'VIP' :
+                         contact.lifecycle === 'hot_lead' ? 'Hot' :
+                         contact.lifecycle === 'payment' ? 'Payment' :
+                         contact.lifecycle === 'customer' ? 'Customer' :
+                         'Cold'}
+                      </span>
+                    )}
+                    
+                    {/* Agent Status */}
+                    {(contact.humanAgent || contact.agentStatus === 'on') && (
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          contact.humanAgent
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-green-100 text-green-800'
+                        }`}
+                      >
+                        {contact.humanAgent ? 'Human' : 'AI'}
+                      </span>
+                    )}
+                    
+                    {/* Chat Status */}
+                    {contact.status && (
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          contact.status === 'open'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {contact.status}
+                      </span>
+                    )}
+                    <span className="text-sm text-gray-500 flex-shrink-0">
+                      {formatTimestamp(contact.lastMessageTime)}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-sm text-gray-500 truncate max-w-full">
+                  {contact.lastMessage}
+                </div>
+                {contact.tags && contact.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {contact.tags.map(tag => (
+                      <span
+                        key={tag}
+                        className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

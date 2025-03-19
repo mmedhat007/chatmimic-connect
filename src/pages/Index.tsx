@@ -3,10 +3,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import ChatArea from '../components/ChatArea';
 import NavSidebar from '../components/NavSidebar';
-import GoogleSheetsButton from '../components/GoogleSheetsButton';
+import LifecycleSidebar from '../components/LifecycleSidebar';
 import { Contact, Message } from '../types';
 import { useIsMobile } from '../hooks/use-mobile';
-import { getContacts, getMessages, getCurrentUser } from '../services/firebase';
+import { getContacts, getMessages, getCurrentUser, updateContactField } from '../services/firebase';
 
 // Mock function to replace Supabase
 const getAgentConfig = async (uid: string) => {
@@ -24,10 +24,13 @@ const getAgentConfig = async (uid: string) => {
 
 const Index = () => {
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [showChat, setShowChat] = useState(false);
+  const [showLifecycle, setShowLifecycle] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [activeLifecycleFilter, setActiveLifecycleFilter] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const navigate = useNavigate();
   const location = useLocation();
@@ -48,12 +51,16 @@ const Index = () => {
           return;
         }
         
-        // Check if WhatsApp config exists (mock implementation)
-        const whatsappConfig = localStorage.getItem(`user_${userUID}_whatsapp_config`);
-        if (!whatsappConfig) {
-          // If WhatsApp config doesn't exist, redirect to WhatsApp setup
-          navigate('/whatsapp-setup');
-          return;
+        // Create a default WhatsApp config if it doesn't exist yet
+        // This prevents the need to show a separate WhatsApp setup page
+        if (!localStorage.getItem(`user_${userUID}_whatsapp_config`)) {
+          const defaultWhatsAppConfig = {
+            setup_skipped: true,
+            timestamp: new Date().toISOString(),
+            note: "WhatsApp setup skipped - user can configure later from settings"
+          };
+          localStorage.setItem(`user_${userUID}_whatsapp_config`, JSON.stringify(defaultWhatsAppConfig));
+          console.log('Created default WhatsApp config to skip setup page');
         }
       } catch (error) {
         console.error('Error checking agent setup:', error);
@@ -67,6 +74,7 @@ const Index = () => {
   useEffect(() => {
     const unsubscribe = getContacts((fetchedContacts) => {
       setContacts(fetchedContacts);
+      setFilteredContacts(fetchedContacts); // Initialize filtered contacts with all contacts
       
       // If there's a selected contact in the navigation state, set it as active
       if (location.state?.selectedContact) {
@@ -88,6 +96,15 @@ const Index = () => {
     // Clean up listener when component unmounts
     return () => unsubscribe();
   }, [location.state, navigate, isMobile]);
+
+  // Filter contacts when activeLifecycleFilter changes
+  useEffect(() => {
+    if (activeLifecycleFilter) {
+      setFilteredContacts(contacts.filter(contact => contact.lifecycle === activeLifecycleFilter));
+    } else {
+      setFilteredContacts(contacts);
+    }
+  }, [activeLifecycleFilter, contacts]);
 
   // Set up real-time messages listener when active contact changes
   useEffect(() => {
@@ -117,11 +134,59 @@ const Index = () => {
     setActiveContact(contact);
     if (isMobile) {
       setShowChat(true);
+      setShowLifecycle(false);
     }
   };
 
   const handleBack = () => {
     setShowChat(false);
+  };
+
+  const handleUpdateContactStatus = async (contactId: string, status: 'new_lead' | 'vip_lead' | 'hot_lead' | 'payment' | 'customer' | 'cold_lead') => {
+    try {
+      // Update in Firebase
+      await updateContactField(contactId, 'lifecycle', status);
+      
+      // Update local state immediately for better UI responsiveness
+      setContacts(prevContacts => 
+        prevContacts.map(contact => 
+          contact.phoneNumber === contactId 
+            ? { ...contact, lifecycle: status } 
+            : contact
+        )
+      );
+      
+      // Also update the filtered contacts to ensure the sidebar reflects changes
+      setFilteredContacts(prevContacts => 
+        prevContacts.map(contact => 
+          contact.phoneNumber === contactId 
+            ? { ...contact, lifecycle: status } 
+            : contact
+        )
+      );
+      
+      // Update active contact if it's the one being modified
+      if (activeContact && activeContact.phoneNumber === contactId) {
+        setActiveContact(prev => prev ? { ...prev, lifecycle: status } : null);
+      }
+
+      console.log(`Updated contact ${contactId} lifecycle to ${status}`);
+    } catch (error) {
+      console.error('Error updating contact status:', error);
+    }
+  };
+
+  const handleFilterByLifecycle = (lifecycleId: string | null) => {
+    setActiveLifecycleFilter(lifecycleId);
+    // If on mobile, return to contacts list view
+    if (isMobile) {
+      setShowChat(false);
+      setShowLifecycle(false);
+    }
+    // Clear active contact if filter changes
+    if (activeContact && activeContact.lifecycle !== lifecycleId && lifecycleId !== null) {
+      setActiveContact(null);
+    }
   };
 
   if (loading) {
@@ -135,32 +200,61 @@ const Index = () => {
   return (
     <div className="h-screen flex bg-gray-50">
       <NavSidebar />
-      <div className="flex-1 flex flex-col ml-16">
-        {/* Header */}
-        <div className="bg-white border-b px-4 py-3 flex justify-between items-center">
-          <h1 className="text-xl font-semibold text-gray-800">ChatMimic</h1>
-          <GoogleSheetsButton />
-        </div>
-        
+      <div className="flex-1 flex ml-16 overflow-hidden">
         {/* Main Content */}
         <div className="flex-1 flex overflow-hidden">
-          {(!isMobile || !showChat) && (
-            <div className={`${isMobile ? 'w-full' : 'w-[380px]'} h-full flex-shrink-0 border-r`}>
-              <Sidebar
-                contacts={contacts}
-                activeContact={activeContact}
-                onSelectContact={handleSelectContact}
+          {/* Lifecycle Sidebar - Always show on desktop, conditionally on mobile */}
+          {(!isMobile || showLifecycle) && (
+            <div className={`${isMobile ? 'w-full' : 'w-64'} h-full flex-shrink-0 border-r`}>
+              <LifecycleSidebar
+                contact={activeContact}
+                onUpdateContactStatus={handleUpdateContactStatus}
+                onClose={() => setShowLifecycle(false)}
+                isMobile={isMobile}
+                onFilterByLifecycle={handleFilterByLifecycle}
+                activeFilter={activeLifecycleFilter}
               />
             </div>
           )}
-          {(isMobile ? showChat : true) && (
+          
+          {/* Chat List Sidebar */}
+          {(!isMobile || (!showChat && !showLifecycle)) && (
+            <div className={`${isMobile ? 'w-full' : 'w-[320px]'} h-full flex-shrink-0 border-r`}>
+              <Sidebar
+                contacts={filteredContacts}
+                activeContact={activeContact}
+                onSelectContact={handleSelectContact}
+                lifecycleFilter={activeLifecycleFilter}
+              />
+            </div>
+          )}
+          
+          {/* Chat Area */}
+          {(isMobile ? showChat : true) && activeContact && (
             <div className={`${isMobile ? 'w-full' : 'flex-1'} h-full`}>
               <ChatArea
                 contact={activeContact}
                 messages={messages}
                 onBack={handleBack}
                 isMobile={isMobile}
+                onUpdateContactStatus={handleUpdateContactStatus}
+                onViewLifecycle={() => {
+                  if (isMobile) {
+                    setShowLifecycle(true);
+                    setShowChat(false);
+                  }
+                }}
               />
+            </div>
+          )}
+          
+          {/* Empty state when no contact is selected */}
+          {!isMobile && !activeContact && (
+            <div className="flex-1 flex items-center justify-center bg-gray-50">
+              <div className="text-center">
+                <h3 className="text-lg font-medium text-gray-700 mb-2">Select a conversation</h3>
+                <p className="text-gray-500">Choose a contact from the sidebar to start chatting</p>
+              </div>
             </div>
           )}
         </div>

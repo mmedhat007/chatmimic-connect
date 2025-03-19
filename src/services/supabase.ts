@@ -39,37 +39,59 @@ export const checkEmbeddingsAvailable = async (): Promise<boolean> => {
   }
 };
 
-// Function to create or get user table
+// Function to ensure the user table exists in Supabase
 export const ensureUserTable = async (uid: string): Promise<boolean> => {
   try {
-    // Check if user's table exists
-    const { data, error } = await supabase
+    // First, check if the table already exists
+    const { data: tableExists, error: checkError } = await supabase
       .from('user_configs')
       .select('id')
-      .eq('user_id', uid)
-      .maybeSingle();
-
-    if (error) {
-      console.error('Error checking user table:', error);
+      .limit(1);
+    
+    // If there's no error, the table exists
+    if (!checkError) {
+      console.log('User config table already exists');
+      
+      // Check if we need to add the full_config column
+      try {
+        // Run a SQL query to check if full_config column exists
+        const { error: columnCheckError } = await supabase.rpc('check_column_exists', {
+          table_name: 'user_configs',
+          column_name: 'full_config'
+        });
+        
+        // If there's an error or the column doesn't exist, add it
+        if (columnCheckError) {
+          console.log('Adding full_config column to user_configs table');
+          
+          // Add the full_config column if it doesn't exist
+          const { error: alterError } = await supabase.rpc('add_jsonb_column', {
+            table_name: 'user_configs',
+            column_name: 'full_config'
+          });
+          
+          if (alterError) {
+            console.error('Error adding full_config column:', alterError);
+            // Continue anyway as the basic functionality will still work
+          }
+        }
+      } catch (e) {
+        console.error('Error checking/adding full_config column:', e);
+        // Continue anyway
+      }
+      
+      return true;
+    }
+    
+    // Create the table if it doesn't exist
+    const { error: createError } = await supabase.rpc('create_config_table');
+    
+    if (createError) {
+      console.error('Error creating user config table:', createError);
       return false;
     }
-
-    // If user doesn't exist in the table, create a new record
-    if (!data) {
-      const { error: insertError } = await supabase
-        .from('user_configs')
-        .insert({ 
-          user_id: uid,
-          temperature: 0.7,
-          max_tokens: 500
-        });
-
-      if (insertError) {
-        console.error('Error creating user record:', insertError);
-        return false;
-      }
-    }
-
+    
+    console.log('Created user config table successfully');
     return true;
   } catch (error) {
     console.error('Error in ensureUserTable:', error);
@@ -80,23 +102,49 @@ export const ensureUserTable = async (uid: string): Promise<boolean> => {
 // Function to save user configuration
 export const saveUserConfig = async (uid: string, config: any): Promise<boolean> => {
   try {
-    // Ensure user table exists
-    const tableExists = await ensureUserTable(uid);
-    if (!tableExists) return false;
+    // Ensure the user table exists first
+    const tableCreated = await ensureUserTable(uid);
+    if (!tableCreated) {
+      console.error('Failed to create user table');
+      return false;
+    }
 
-    // Extract temperature and max_tokens from the config, or use defaults
-    const temperature = config.communication_style?.tone === 'enthusiastic' ? 0.8 : 0.7;
-    const max_tokens = config.communication_style?.response_length === 'long' ? 800 : 
-                       (config.communication_style?.response_length === 'short' ? 300 : 500);
-
-    // Update the user's configuration with the values we have in the table
-    const { error } = await supabase
+    // First, check if a record already exists
+    const { data: existingConfig, error: fetchError } = await supabase
       .from('user_configs')
-      .update({ 
-        temperature: temperature,
-        max_tokens: max_tokens
-      })
-      .eq('user_id', uid);
+      .select('id')
+      .eq('user_id', uid)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error('Error checking existing config:', fetchError);
+      return false;
+    }
+
+    // Convert config to appropriate format for database
+    const configToSave = {
+      user_id: uid,
+      temperature: 0.7, // Default or extract from config if available
+      max_tokens: 500,  // Default or extract from config if available
+      full_config: config // Store the entire configuration object
+    };
+
+    // Update or insert based on whether a record exists
+    let error;
+    if (existingConfig) {
+      const { error: updateError } = await supabase
+        .from('user_configs')
+        .update(configToSave)
+        .eq('user_id', uid);
+      
+      error = updateError;
+    } else {
+      const { error: insertError } = await supabase
+        .from('user_configs')
+        .insert(configToSave);
+      
+      error = insertError;
+    }
 
     if (error) {
       console.error('Error saving user config:', error);
@@ -113,9 +161,23 @@ export const saveUserConfig = async (uid: string, config: any): Promise<boolean>
 // Function to get user configuration
 export const getUserConfig = async (uid: string): Promise<any> => {
   try {
+    // First try to get from localStorage for faster access
+    const storedConfig = localStorage.getItem(`user_${uid}_config`);
+    if (storedConfig) {
+      try {
+        const config = JSON.parse(storedConfig);
+        console.log('Retrieved config from localStorage:', config);
+        return config;
+      } catch (e) {
+        console.error('Error parsing stored config:', e);
+        // Continue to get from Supabase if localStorage parsing fails
+      }
+    }
+
+    // Get from Supabase if not in localStorage
     const { data, error } = await supabase
       .from('user_configs')
-      .select('temperature, max_tokens')
+      .select('*')  // Select all columns to get full_config
       .eq('user_id', uid)
       .maybeSingle();
 
@@ -124,9 +186,19 @@ export const getUserConfig = async (uid: string): Promise<any> => {
       return null;
     }
 
-    // Return the config in the format the app expects
-    // For now, we'll create a default structure and just set the temperature and max_tokens
-    const config = {
+    // If we have full_config, use it
+    if (data && data.full_config) {
+      console.log('Retrieved full config from Supabase:', data.full_config);
+      
+      // Save to localStorage for future use
+      localStorage.setItem(`user_${uid}_config`, JSON.stringify(data.full_config));
+      
+      return data.full_config;
+    }
+
+    // If no full_config, return a default structure
+    // This will only happen for older entries that don't have full_config
+    const defaultConfig = {
       company_info: {
         name: 'Your Business',
         industry: '',
@@ -161,7 +233,7 @@ export const getUserConfig = async (uid: string): Promise<any> => {
       }
     };
 
-    return config;
+    return defaultConfig;
   } catch (error) {
     console.error('Error in getUserConfig:', error);
     return null;

@@ -7,6 +7,13 @@ export interface Contact {
   agentStatus?: 'on' | 'off';
   humanAgent?: boolean;
   status?: 'open' | 'closed';
+  lifecycle?: 'new_lead' | 'vip_lead' | 'hot_lead' | 'payment' | 'customer' | 'cold_lead';
+  assignedTeam?: string;
+  workflowStatus?: {
+    name: string;
+    status: 'started' | 'ended' | 'in_progress';
+    timestamp?: number;
+  };
 }
 
 export interface Message {
