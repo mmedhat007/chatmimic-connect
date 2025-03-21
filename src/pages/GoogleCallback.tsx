@@ -1,88 +1,111 @@
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { getCurrentUser } from '../services/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { doc, updateDoc, getFirestore } from 'firebase/firestore';
+import { auth } from '../services/firebase';
+import { RefreshCw } from 'lucide-react';
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET;
-const GOOGLE_REDIRECT_URI = import.meta.env.VITE_GOOGLE_REDIRECT_URI;
+interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+}
 
-const GoogleCallback = () => {
+const GoogleCallback: React.FC = () => {
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
-    const handleCallback = async () => {
+    const getTokenFromCode = async (code: string) => {
       try {
-        // Get the authorization code from URL
-        const urlParams = new URLSearchParams(window.location.search);
-        const code = urlParams.get('code');
-        const error = urlParams.get('error');
-
-        if (error) {
-          throw new Error(`OAuth error: ${error}`);
-        }
-
-        if (!code) {
-          throw new Error('No authorization code received');
-        }
-
-        // Exchange code for tokens
-        const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        const tokenEndpoint = import.meta.env.VITE_API_URL || '/api/google/token';
+        const response = await fetch(tokenEndpoint, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
           },
-          body: new URLSearchParams({
-            code,
-            client_id: GOOGLE_CLIENT_ID,
-            client_secret: GOOGLE_CLIENT_SECRET,
-            redirect_uri: GOOGLE_REDIRECT_URI,
-            grant_type: 'authorization_code',
-          }),
+          body: JSON.stringify({ code }),
         });
 
-        const tokenData = await tokenResponse.json();
-
-        if (!tokenResponse.ok) {
-          throw new Error(`Token exchange failed: ${tokenData.error}`);
+        if (!response.ok) {
+          throw new Error('Failed to exchange code for token');
         }
 
-        // Store tokens in Firestore
-        const userUID = getCurrentUser();
-        if (!userUID) {
-          throw new Error('No user logged in');
+        const tokenData: TokenResponse = await response.json();
+        
+        // Save token to Firebase
+        const user = auth.currentUser;
+        if (!user) {
+          throw new Error('User not authenticated');
         }
 
-        const userRef = doc(db, 'Users', userUID);
-        await updateDoc(userRef, {
+        const db = getFirestore();
+        await updateDoc(doc(db, 'Users', user.uid), {
           'credentials.googleSheetsOAuth': {
             accessToken: tokenData.access_token,
             refreshToken: tokenData.refresh_token,
-            expiryDate: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
-          },
+            expiresAt: Date.now() + (tokenData.expires_in * 1000),
+          }
         });
 
-        // Redirect back to the main page
-        navigate('/');
+        // Navigate back to Google Sheets page
+        navigate('/google-sheets', { 
+          state: { success: true, message: 'Successfully connected to Google Sheets!' } 
+        });
       } catch (error) {
-        console.error('Error in Google callback:', error);
-        // Redirect to error page or show error message
-        navigate('/error', { state: { error: error.message } });
+        console.error('Error exchanging code for token:', error);
+        setError('Failed to connect Google Sheets. Please try again.');
+        setLoading(false);
       }
     };
 
-    handleCallback();
-  }, [navigate]);
+    // Get the authorization code from URL
+    const params = new URLSearchParams(location.search);
+    const code = params.get('code');
+    const error = params.get('error');
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-        <p className="mt-4 text-gray-600">Connecting to Google Sheets...</p>
+    if (error) {
+      setError('Authorization was cancelled or denied.');
+      setLoading(false);
+      return;
+    }
+
+    if (code) {
+      getTokenFromCode(code);
+    } else {
+      setError('No authorization code received.');
+      setLoading(false);
+    }
+  }, [location, navigate]);
+
+  if (loading) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-gray-50">
+        <RefreshCw className="w-12 h-12 text-blue-500 animate-spin mb-4" />
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">Connecting to Google Sheets</h1>
+        <p className="text-gray-500">Please wait while we complete the authorization process...</p>
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-gray-50">
+        <div className="bg-red-100 border border-red-200 text-red-700 px-4 py-3 rounded max-w-md mb-4">
+          <p>{error}</p>
+        </div>
+        <button
+          onClick={() => navigate('/google-sheets')}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+        >
+          Return to Google Sheets
+        </button>
+      </div>
+    );
+  }
+
+  return null;
 };
 
 export default GoogleCallback; 

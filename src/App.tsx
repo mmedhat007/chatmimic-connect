@@ -16,6 +16,7 @@ import ResetPassword from './pages/ResetPassword';
 import AgentSetupPage from './pages/AgentSetupPage';
 import AutomationsPage from './pages/AutomationsPage';
 import WhatsAppSetup from './pages/WhatsAppSetup';
+import GoogleSheetsPage from './pages/GoogleSheetsPage';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -116,6 +117,14 @@ const App = () => {
           element={
             <ProtectedRoute>
               <BroadcastPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/google-sheets"
+          element={
+            <ProtectedRoute>
+              <GoogleSheetsPage />
             </ProtectedRoute>
           }
         />
