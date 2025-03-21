@@ -19,6 +19,13 @@ interface Message {
   timestamp: Date;
 }
 
+interface BehaviorRule {
+  id: string;
+  rule: string;
+  description: string;
+  enabled: boolean;
+}
+
 interface BusinessInfo {
   company_info: {
     name: string;
@@ -94,6 +101,7 @@ interface BusinessInfo {
       required_disclaimers?: string[];
     }[];
   };
+  behavior_rules?: BehaviorRule[];
 }
 
 // Function to generate industry-specific structure
@@ -140,7 +148,7 @@ const AgentSetupPage = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome-message',
-      text: "👋 Hi! This is a test version of the DenoteAI WhatsApp Bot Configurator. Just type anything and hit send to complete the setup with test data for a real estate business. No need to answer any questions!",
+      text: "👋 Hi! I'm your DenoteAI WhatsApp Bot Configurator. Let's set up your messaging bot to perfectly match your business needs.\n\n1. What's your business name?\n2. What industry or business type are you in? (For example: real estate, retail, restaurant, etc.)",
       sender: 'bot',
       timestamp: new Date()
     }
@@ -272,7 +280,8 @@ const AgentSetupPage = () => {
       gdpr_disclaimer: '',
       forbidden_words: [] as string[],
       industry_regulations: []
-    }
+    },
+    behavior_rules: []
   });
 
   // Scroll to bottom when messages change
@@ -367,7 +376,21 @@ const AgentSetupPage = () => {
           required_integrations: ["Calendar", "CRM", "Document Signing"],
           automation_preferences: "High automation for initial inquiries, human handoff for serious buyers",
           lead_process: "Collect contact details, property preferences, budget range, and timeline before human agent follows up"
-        }
+        },
+        behavior_rules: [
+          {
+            id: "rule-ask-name",
+            rule: "Ask for customer name after initial inquiry",
+            description: "The agent will always ask for the customer's name if they haven't provided it after their first message.",
+            enabled: true
+          },
+          {
+            id: "rule-qualify",
+            rule: "Qualify leads before providing detailed information",
+            description: "The agent will ask qualifying questions (budget, timeline, requirements) before sharing product/service details.",
+            enabled: true
+          }
+        ]
       };
 
       // Add a success message to the chat
@@ -462,6 +485,16 @@ const AgentSetupPage = () => {
             { section: 'business_processes', type: 'configuration' }
           );
           
+          // Behavior rules embeddings
+          if (config.behavior_rules && config.behavior_rules.length > 0) {
+            await createEmbeddings(
+              uid,
+              JSON.stringify(config.behavior_rules),
+              'behavior_rules',
+              { section: 'behavior_rules', type: 'configuration' }
+            );
+          }
+          
           // Complete config embeddings
           await createEmbeddings(
             uid,
@@ -497,7 +530,7 @@ const AgentSetupPage = () => {
   return (
     <div className="flex h-screen bg-gray-50">
       <NavSidebar />
-      <div className="flex-1 ml-20 p-6 overflow-y-auto">
+      <div className="flex-1 ml-16 p-6 overflow-y-auto">
         <div className="container mx-auto max-w-5xl bg-white rounded-lg shadow-sm p-6">
           <h1 className="text-2xl font-bold mb-6">WhatsApp Agent Setup</h1>
           
