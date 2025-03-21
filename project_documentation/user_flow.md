@@ -197,4 +197,32 @@ This approach balances security, performance, and user experience.
 1. User can edit existing configurations
 2. User can disconnect Google Sheets access
 3. User can view all active configurations
-4. User can create new configurations as needed 
+4. User can create new configurations as needed
+
+## Lifecycle Tagging Integration Flow
+
+### Initial Setup
+1. User navigates to the Lifecycle Tagging page from the sidebar
+2. User can toggle the automatic lifecycle tagging feature on/off
+3. The system will start monitoring all WhatsApp messages (both from user and agent) for keywords
+
+### Configuration
+1. User creates tagging rules that link keywords to specific lifecycle stages:
+   - User selects a lifecycle stage (e.g., "interested", "hot_lead", "cold_lead")
+   - User defines keywords or phrases that indicate this stage (e.g., "pricing", "interested", "demo")
+   - User can set rules as active or inactive
+2. Configurations are stored in the user's document under `workflows.whatsapp_agent.lifecycleTagConfigs`
+3. User can create multiple rules for different lifecycle stages
+4. User can toggle rules on/off as needed
+
+### Automatic Tagging
+1. When a new WhatsApp message arrives (from either customer or agent):
+   - The system checks the message text against all active lifecycle tagging rules
+   - If a keyword match is found, the contact's lifecycle stage is automatically updated
+   - The system prioritizes rules in the order they were created if multiple matches occur
+
+### Management
+1. User can edit existing tagging rules
+2. User can delete rules that are no longer needed
+3. User can view all active rules
+4. User can create new rules as needed for different lifecycle stages 

@@ -41,6 +41,7 @@ In addition to these common fields, each workflow type may have specific fields:
 
 - **WhatsApp Agent Workflow**:
   - `sheetConfigs`: Array - Google Sheets configuration data
+  - `lifecycleTagConfigs`: Array - Lifecycle tagging rule configurations
 
 #### Credential Storage
 
