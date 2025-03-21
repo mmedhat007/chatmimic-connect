@@ -17,6 +17,7 @@ import AgentSetupPage from './pages/AgentSetupPage';
 import AutomationsPage from './pages/AutomationsPage';
 import WhatsAppSetup from './pages/WhatsAppSetup';
 import GoogleSheetsPage from './pages/GoogleSheetsPage';
+import LifecycleTaggingPage from './pages/LifecycleTaggingPage';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -125,6 +126,14 @@ const App = () => {
           element={
             <ProtectedRoute>
               <GoogleSheetsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/lifecycle-tagging"
+          element={
+            <ProtectedRoute>
+              <LifecycleTaggingPage />
             </ProtectedRoute>
           }
         />

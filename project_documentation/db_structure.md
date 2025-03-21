@@ -21,6 +21,7 @@ Used for real-time messaging, user authentication, and WhatsApp integration.
       - `limit`: Number - Usage limit
       - `reset_date`: Timestamp - Date when limit resets
       - `paid`: Boolean - Indicates if paid
+      - `setup_completed`: Boolean - Indicates if agent setup is completed
     - `whatsapp_agent` (map)
       - `executions_used`: Number - Count of executions used
       - `limit`: Number - Usage limit
@@ -32,6 +33,11 @@ Used for real-time messaging, user authentication, and WhatsApp integration.
         - `sheetId`: String - Google Sheet ID
         - `active`: Boolean - Whether integration is active
         - `columns`: Array - Column mappings for data extraction
+      - `lifecycleTagConfigs`: Array - Lifecycle tagging configuration data
+        - `id`: String - Unique identifier
+        - `name`: String - Lifecycle stage name (e.g., "interested", "hot_lead")
+        - `keywords`: Array<String> - Keywords that trigger this lifecycle tag
+        - `active`: Boolean - Whether this tagging rule is active
   - `credentials` (map)
     - `googleAuthCredentials` (map) - Google Analytics credentials
     - `whatsappCredentials` (map) - WhatsApp credentials

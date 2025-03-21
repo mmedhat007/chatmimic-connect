@@ -3,6 +3,7 @@ import { MessageSquare, BarChart, Menu, LogOut, Settings, Users, Send, Grid, Wor
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser } from '../services/firebase';
 import GoogleSheetsIcon from './icons/GoogleSheetsIcon';
+import LifecycleIcon from './icons/LifecycleIcon';
 
 const NavSidebar = () => {
   const location = useLocation();
@@ -29,6 +30,12 @@ const NavSidebar = () => {
       path: '/google-sheets',
       iconColor: '#0F9D58' // Google Sheets green color
     },
+    { 
+      icon: LifecycleIcon, 
+      text: 'Lifecycle Tagging', 
+      path: '/lifecycle-tagging',
+      alwaysWhite: true // Always use white color for this icon
+    },
   ];
 
   return (
@@ -50,10 +57,17 @@ const NavSidebar = () => {
               }`}
               title={item.text}
             >
-              <IconComponent 
-                size={24} 
-                color={item.iconColor && !isActive ? item.iconColor : undefined}
-              />
+              {isActive || item.alwaysWhite ? (
+                <IconComponent 
+                  size={24} 
+                  className="text-white"
+                />
+              ) : (
+                <IconComponent 
+                  size={24} 
+                  color={item.iconColor || undefined}
+                />
+              )}
             </Link>
           );
         })}
