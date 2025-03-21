@@ -8,7 +8,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from './ui/switch';
 import { PlusCircle, Trash2, Save, RefreshCw, FileSpreadsheet, LogOut } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { SheetConfig, SheetColumn, getUserSheets, createSheet, saveSheetConfig, getAllSheetConfigs } from '../services/googleSheets';
+import { 
+  SheetConfig, 
+  SheetColumn, 
+  getUserSheets, 
+  createSheet, 
+  saveSheetConfig, 
+  getAllSheetConfigs,
+  getGoogleAuthStatus,
+  authorizeGoogleSheets,
+  revokeGoogleAuth
+} from '../services/googleSheets';
 import { startWhatsAppGoogleSheetsIntegration } from '../services/whatsappGoogleIntegration';
 import { auth } from '../services/firebase';
 
@@ -103,6 +113,23 @@ const GoogleSheetsConfig: React.FC = () => {
     };
 
     checkConnection();
+  }, []);
+
+  // Check if user has authorized Google Sheets
+  useEffect(() => {
+    const checkGoogleAuth = async () => {
+      setAuthLoading(true);
+      try {
+        const isAuthorized = await getGoogleAuthStatus();
+        setIsGoogleAuthorized(isAuthorized);
+      } catch (error) {
+        console.error('Error checking Google auth status:', error);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    checkGoogleAuth();
   }, []);
 
   // Start the integration when component mounts
@@ -261,32 +288,69 @@ const GoogleSheetsConfig: React.FC = () => {
   // Function to handle Google authorization
   const handleGoogleAuth = async () => {
     if (isGoogleAuthorized) {
+      setAuthLoading(true);
       try {
-        // Placeholder for revoking auth
+        await revokeGoogleAuth();
         setIsGoogleAuthorized(false);
+        setIsConnected(false);
+        setUserSheets([]);
+        setSavedConfigs([]);
         toast.success('Google Sheets disconnected');
       } catch (error) {
         console.error('Error revoking Google auth:', error);
         toast.error('Failed to disconnect Google Sheets');
+      } finally {
+        setAuthLoading(false);
       }
     } else {
-      setAuthLoading(true);
       try {
-        // Redirect to Google OAuth flow
-        const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-          `client_id=${GOOGLE_CLIENT_ID}` +
-          `&redirect_uri=${encodeURIComponent(GOOGLE_REDIRECT_URI)}` +
-          `&response_type=code` +
-          `&scope=${encodeURIComponent(GOOGLE_SCOPES)}` +
-          `&access_type=offline` +
-          `&prompt=consent`;
-
-        window.location.href = authUrl;
+        await authorizeGoogleSheets();
+        // The rest happens in the callback
       } catch (error) {
         console.error('Error authorizing Google Sheets:', error);
         toast.error('Failed to connect Google Sheets');
-        setAuthLoading(false);
       }
+    }
+  };
+
+  const handleTestIntegration = async () => {
+    try {
+      // Generate test phone number and message ID
+      const testPhoneNumber = `test-${Date.now()}`;
+      const testMessageId = `test-message-${Date.now()}`;
+      
+      // Mock the WhatsApp message in Firebase
+      const { doc, setDoc } = await import('firebase/firestore');
+      const { db, getCurrentUser } = await import('../services/firebase');
+      
+      const userUID = getCurrentUser();
+      if (!userUID) {
+        toast.error('No user logged in');
+        return;
+      }
+      
+      // Create a test message document in Firebase
+      await setDoc(
+        doc(db, `Whatsapp_Data/${userUID}/chats/${testPhoneNumber}/messages/${testMessageId}`),
+        {
+          message: 'This is a test message to verify the Google Sheets integration. My name is Test User, my email is test@example.com, and my phone number is 123-456-7890. I am interested in your product.',
+          timestamp: Date.now(),
+          sender: 'user'
+        }
+      );
+      
+      // Import and call processWhatsAppMessage with the correct parameters
+      const { processWhatsAppMessage } = await import('../services/whatsappGoogleIntegration');
+      const result = await processWhatsAppMessage(testPhoneNumber, testMessageId);
+      
+      if (result) {
+        toast.success('Test message successfully processed and added to Google Sheets');
+      } else {
+        toast.error('Test message processed but no data was added to sheets');
+      }
+    } catch (error) {
+      console.error('Error testing integration:', error);
+      toast.error('Failed to test Google Sheets integration: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
   };
 
@@ -547,6 +611,22 @@ const GoogleSheetsConfig: React.FC = () => {
             </div>
           )}
         </>
+      )}
+
+      {/* Test Integration */}
+      {isGoogleAuthorized && userSheets.length > 0 && savedConfigs.some(config => config.active) && (
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <h2 className="text-xl font-semibold mb-4">Test Integration</h2>
+          <p className="text-gray-600 mb-4">
+            Test your Google Sheets integration by sending a sample message. This will help verify that data extraction and sheet updates are working correctly.
+          </p>
+          <button
+            onClick={handleTestIntegration}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md"
+          >
+            Send Test Message
+          </button>
+        </div>
       )}
     </div>
   );

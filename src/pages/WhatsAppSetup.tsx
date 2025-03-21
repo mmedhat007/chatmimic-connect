@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import NavSidebar from '../components/NavSidebar';
 import WhatsAppSetupComponent from '../components/WhatsAppSetup';
+import { Link } from 'react-router-dom';
 
 const WhatsAppSetup: React.FC = () => {
   const navigate = useNavigate();
@@ -23,6 +24,23 @@ const WhatsAppSetup: React.FC = () => {
           </p>
           
           <WhatsAppSetupComponent onComplete={handleSetupComplete} />
+          
+          <div className="mt-10 bg-blue-50 p-6 rounded-lg border border-blue-200">
+            <h2 className="text-xl font-semibold mb-3">Data Collection with Google Sheets</h2>
+            <p className="mb-4">
+              Want to collect and organize data from WhatsApp conversations? 
+              You can connect Google Sheets to automatically extract and store information 
+              from your WhatsApp messages.
+            </p>
+            <div className="flex items-center mt-2">
+              <Link 
+                to="/google-sheets" 
+                className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded transition-colors duration-300"
+              >
+                Set up Google Sheets Integration
+              </Link>
+            </div>
+          </div>
         </div>
       </div>
     </div>

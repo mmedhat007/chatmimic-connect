@@ -38,7 +38,141 @@ export const getGoogleSheetsCredentials = async () => {
     throw new Error('Google Sheets not connected');
   }
   
+  // Check if token is expired and needs refreshing
+  if (credentials.expiresAt && credentials.expiresAt < Date.now()) {
+    // Token is expired, need to refresh
+    if (!credentials.refreshToken) {
+      throw new Error('Refresh token not available, re-authorization required');
+    }
+    
+    try {
+      const refreshedCredentials = await refreshGoogleToken(credentials.refreshToken);
+      // Update credentials in Firebase
+      await updateDoc(doc(db, 'Users', userUID), {
+        'credentials.googleSheetsOAuth': {
+          ...credentials,
+          accessToken: refreshedCredentials.access_token,
+          expiresAt: Date.now() + (refreshedCredentials.expires_in * 1000),
+        }
+      });
+      
+      // Return refreshed credentials
+      return {
+        ...credentials,
+        accessToken: refreshedCredentials.access_token,
+        expiresAt: Date.now() + (refreshedCredentials.expires_in * 1000),
+      };
+    } catch (error) {
+      console.error('Error refreshing token:', error);
+      throw new Error('Failed to refresh Google token');
+    }
+  }
+  
   return credentials;
+};
+
+/**
+ * Refresh a Google OAuth token using the refresh token
+ */
+const refreshGoogleToken = async (refreshToken: string) => {
+  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+  const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET || '';
+  
+  const params = new URLSearchParams();
+  params.append('client_id', GOOGLE_CLIENT_ID);
+  params.append('client_secret', GOOGLE_CLIENT_SECRET);
+  params.append('refresh_token', refreshToken);
+  params.append('grant_type', 'refresh_token');
+  
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params,
+  });
+  
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(`Failed to refresh token: ${errorData.error_description || errorData.error}`);
+  }
+  
+  return await response.json();
+};
+
+/**
+ * Check if the user has authorized Google Sheets
+ */
+export const getGoogleAuthStatus = async (): Promise<boolean> => {
+  const userUID = getCurrentUser();
+  if (!userUID) return false;
+
+  try {
+    const userDoc = await getDoc(doc(db, 'Users', userUID));
+    if (!userDoc.exists()) return false;
+    
+    const userData = userDoc.data();
+    const credentials = userData.credentials?.googleSheetsOAuth;
+    
+    return !!(credentials?.accessToken);
+  } catch (error) {
+    console.error('Error checking Google auth status:', error);
+    return false;
+  }
+};
+
+/**
+ * Authorize Google Sheets access
+ * This function doesn't actually handle the OAuth flow - it just redirects to Google
+ * The actual token exchange happens in the GoogleCallback component
+ */
+export const authorizeGoogleSheets = async () => {
+  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+  const GOOGLE_REDIRECT_URI = `${window.location.origin}/google-callback`;
+  const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
+  
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+    `client_id=${GOOGLE_CLIENT_ID}` +
+    `&redirect_uri=${encodeURIComponent(GOOGLE_REDIRECT_URI)}` +
+    `&response_type=code` +
+    `&scope=${encodeURIComponent(GOOGLE_SCOPES)}` +
+    `&access_type=offline` +
+    `&prompt=consent`;
+  
+  window.location.href = authUrl;
+};
+
+/**
+ * Revoke Google Sheets authorization
+ */
+export const revokeGoogleAuth = async () => {
+  const userUID = getCurrentUser();
+  if (!userUID) throw new Error('No user logged in');
+  
+  try {
+    // First, revoke the token with Google
+    const credentials = await getGoogleSheetsCredentials();
+    
+    if (credentials.accessToken) {
+      // Notify Google to revoke the token
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${credentials.accessToken}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      });
+    }
+    
+    // Then remove the token from Firebase
+    await updateDoc(doc(db, 'Users', userUID), {
+      'credentials.googleSheetsOAuth': null
+    });
+    
+    return true;
+  } catch (error) {
+    console.error('Error revoking Google auth:', error);
+    throw error;
+  }
 };
 
 /**
@@ -177,7 +311,8 @@ export const getSheetConfig = async (sheetId: string): Promise<SheetConfig | nul
   if (!userDoc.exists()) return null;
   
   const userData = userDoc.data();
-  const sheetConfigs = userData.sheetConfigs || [];
+  // Get from workflows.whatsapp_agent.sheetConfigs instead of directly from the user document
+  const sheetConfigs = userData.workflows?.whatsapp_agent?.sheetConfigs || [];
   
   return sheetConfigs.find((config: SheetConfig) => config.sheetId === sheetId) || null;
 };
@@ -193,7 +328,8 @@ export const getAllSheetConfigs = async (): Promise<SheetConfig[]> => {
   if (!userDoc.exists()) return [];
   
   const userData = userDoc.data();
-  return userData.sheetConfigs || [];
+  // Get from workflows.whatsapp_agent.sheetConfigs instead of directly from the user document
+  return userData.workflows?.whatsapp_agent?.sheetConfigs || [];
 };
 
 /**
@@ -207,7 +343,15 @@ export const saveSheetConfig = async (config: SheetConfig) => {
   if (!userDoc.exists()) throw new Error('User document not found');
   
   const userData = userDoc.data();
-  const sheetConfigs = userData.sheetConfigs || [];
+  
+  // Get current workflows or initialize if it doesn't exist
+  const workflows = userData.workflows || {};
+  
+  // Get current whatsapp_agent config or initialize if it doesn't exist
+  const whatsappAgent = workflows.whatsapp_agent || {};
+  
+  // Get current sheetConfigs or initialize if it doesn't exist
+  const sheetConfigs = whatsappAgent.sheetConfigs || [];
   
   // Update or add the config
   const existingIndex = sheetConfigs.findIndex((c: SheetConfig) => c.sheetId === config.sheetId);
@@ -224,9 +368,9 @@ export const saveSheetConfig = async (config: SheetConfig) => {
     });
   }
   
-  // Save back to Firebase
+  // Save back to Firebase - only update the specific nested field
   await updateDoc(doc(db, 'Users', userUID), {
-    sheetConfigs
+    'workflows.whatsapp_agent.sheetConfigs': sheetConfigs
   });
   
   return config;

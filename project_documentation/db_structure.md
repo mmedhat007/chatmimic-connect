@@ -21,12 +21,26 @@ Used for real-time messaging, user authentication, and WhatsApp integration.
       - `limit`: Number - Usage limit
       - `reset_date`: Timestamp - Date when limit resets
       - `paid`: Boolean - Indicates if paid
+    - `whatsapp_agent` (map)
+      - `executions_used`: Number - Count of executions used
+      - `limit`: Number - Usage limit
+      - `reset_date`: Timestamp - Date when limit resets
+      - `paid`: Boolean - Indicates if paid
       - `setup_completed`: Boolean - Indicates if agent setup is completed
+      - `sheetConfigs`: Array - Google Sheets configuration data
+        - `name`: String - Configuration name
+        - `sheetId`: String - Google Sheet ID
+        - `active`: Boolean - Whether integration is active
+        - `columns`: Array - Column mappings for data extraction
   - `credentials` (map)
     - `googleAuthCredentials` (map) - Google Analytics credentials
     - `whatsappCredentials` (map) - WhatsApp credentials
       - `access_token`: String - WhatsApp API access token
       - `phone_number_id`: String - WhatsApp business phone ID
+    - `googleSheetsOAuth` (map) - Google Sheets API credentials
+      - `accessToken`: String - Google OAuth access token
+      - `refreshToken`: String - Google OAuth refresh token for token renewal
+      - `expiresAt`: Number - Timestamp when the access token expires
 
 #### Whatsapp_Data Collection
 - `{uid}` (document)

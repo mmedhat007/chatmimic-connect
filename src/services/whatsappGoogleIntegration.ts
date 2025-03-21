@@ -25,7 +25,7 @@ export const startWhatsAppGoogleSheetsIntegration = async (): Promise<() => void
     return () => {};
   }
 
-  // Get active sheet configurations
+  // Get active sheet configurations from the new path: userData.workflows.whatsapp_agent.sheetConfigs
   const sheetConfigs = await getAllSheetConfigs();
   const activeConfigs = sheetConfigs.filter(config => config.active);
   
@@ -131,7 +131,7 @@ export const processWhatsAppMessage = async (
     
     const message = messageDoc.data() as Message;
     
-    // Get active sheet configurations
+    // Get active sheet configurations from the new path: userData.workflows.whatsapp_agent.sheetConfigs
     const sheetConfigs = await getAllSheetConfigs();
     const activeConfigs = sheetConfigs.filter(config => config.active);
     

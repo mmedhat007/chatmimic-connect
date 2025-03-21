@@ -487,105 +487,132 @@ const AgentSetupPage = () => {
   };
 
   const handleContinueToDashboard = () => {
-    // Add a temporary empty WhatsApp config to localStorage to avoid immediate redirect
-    // Users can still access WhatsApp setup from the dashboard when they're ready
-    if (userUID) {
-      const emptyWhatsAppConfig = {
-        setup_deferred: true,
-        timestamp: new Date().toISOString()
-      };
-      localStorage.setItem(`user_${userUID}_whatsapp_config`, JSON.stringify(emptyWhatsAppConfig));
-      console.log('Saved temporary WhatsApp config to prevent immediate redirect');
-    }
     navigate('/');
   };
 
+  const handleSetupGoogleSheets = () => {
+    navigate('/google-sheets');
+  };
+
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen bg-gray-50">
       <NavSidebar />
-      <div className="flex-1 ml-20">
-        <div className="p-8 max-w-4xl mx-auto">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-4">WhatsApp AI Assistant Setup</h1>
-            <p className="text-lg text-gray-600">
-              Design your perfect WhatsApp AI assistant that understands your business needs. Answer the questions below to customize your AI agent.
-            </p>
-            
-            {/* Show warning if embeddings are not available */}
-            {embeddingsAvailable === false && (
-              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start">
-                <AlertTriangle className="text-yellow-500 mr-3 mt-0.5" size={18} />
-                <p className="text-sm text-yellow-700">
-                  OpenAI embeddings are not available. Your configuration will be saved, but advanced search features may be limited.
-                </p>
+      <div className="flex-1 ml-20 p-6 overflow-y-auto">
+        <div className="container mx-auto max-w-5xl bg-white rounded-lg shadow-sm p-6">
+          <h1 className="text-2xl font-bold mb-6">WhatsApp Agent Setup</h1>
+          
+          {setupComplete ? (
+            <div className="text-center py-8">
+              <div className="mb-4 flex flex-col items-center">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h2 className="text-2xl font-semibold text-gray-800 mb-2">Setup Complete!</h2>
+                <p className="text-gray-600 mb-6">Your WhatsApp agent is now configured and ready to use.</p>
               </div>
-            )}
-          </div>
-          <div className="h-[600px] bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
-            {/* Chat Header */}
-            <div className="bg-white border-b px-4 py-3">
-              <div className="flex items-center">
-                <div className="flex items-center">
-                  <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white">
-                    🤖
-                  </div>
-                  <div className="ml-3">
-                    <div className="font-medium">DenoteAI Business Assistant</div>
-                    <div className="text-xs text-gray-500">Configuring your WhatsApp AI agent</div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div className="bg-blue-50 p-6 rounded-lg border border-blue-100">
+                  <h3 className="text-lg font-semibold mb-2">Dashboard</h3>
+                  <p className="text-gray-600 mb-4">View your agent stats, performance metrics, and manage your WhatsApp conversations.</p>
+                  <button
+                    onClick={handleContinueToDashboard}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded transition-colors duration-300"
+                  >
+                    Go to Dashboard
+                  </button>
+                </div>
+                
+                <div className="bg-purple-50 p-6 rounded-lg border border-purple-100">
+                  <h3 className="text-lg font-semibold mb-2">Google Sheets Integration</h3>
+                  <p className="text-gray-600 mb-4">Connect Google Sheets to collect and organize data from your WhatsApp conversations.</p>
+                  <button
+                    onClick={handleSetupGoogleSheets}
+                    className="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded transition-colors duration-300"
+                  >
+                    Set up Google Sheets
+                  </button>
+                </div>
+              </div>
+              
+              <div className="bg-yellow-50 p-6 rounded-lg border border-yellow-100 text-left">
+                <div className="flex items-start">
+                  <AlertTriangle className="h-6 w-6 text-yellow-600 mr-3 mt-1" />
+                  <div>
+                    <h3 className="text-lg font-semibold mb-2">Data Collection Tips</h3>
+                    <p className="text-gray-600 mb-3">
+                      With Google Sheets integration, you can automatically:
+                    </p>
+                    <ul className="list-disc pl-5 text-gray-600 space-y-1">
+                      <li>Extract customer information from conversations</li>
+                      <li>Organize leads and inquiries in spreadsheets</li>
+                      <li>Track important metrics from WhatsApp interactions</li>
+                      <li>Customize which data points to collect</li>
+                    </ul>
                   </div>
                 </div>
               </div>
             </div>
+          ) : (
+            <div className="h-[600px] bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
+              {/* Chat Header */}
+              <div className="bg-white border-b px-4 py-3">
+                <div className="flex items-center">
+                  <div className="flex items-center">
+                    <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white">
+                      🤖
+                    </div>
+                    <div className="ml-3">
+                      <div className="font-medium">DenoteAI Business Assistant</div>
+                      <div className="text-xs text-gray-500">Configuring your WhatsApp AI agent</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-            {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
+              {/* Messages Area */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {messages.map((message) => (
                   <div
-                    className={`max-w-[70%] rounded-lg px-4 py-2 ${
-                      message.sender === 'user'
-                        ? 'bg-blue-500 text-white rounded-bl-none'
-                        : 'bg-white text-gray-800 rounded-br-none shadow'
-                    }`}
+                    key={message.id}
+                    className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
-                    <p className="text-sm whitespace-pre-wrap break-words">{message.text}</p>
                     <div
-                      className={`text-xs mt-1 ${
-                        message.sender === 'user' ? 'text-white/80' : 'text-gray-500'
+                      className={`max-w-[70%] rounded-lg px-4 py-2 ${
+                        message.sender === 'user'
+                          ? 'bg-blue-500 text-white rounded-bl-none'
+                          : 'bg-white text-gray-800 rounded-br-none shadow'
                       }`}
                     >
-                      {message.timestamp.toLocaleTimeString()}
+                      <p className="text-sm whitespace-pre-wrap break-words">{message.text}</p>
+                      <div
+                        className={`text-xs mt-1 ${
+                          message.sender === 'user' ? 'text-white/80' : 'text-gray-500'
+                        }`}
+                      >
+                        {message.timestamp.toLocaleTimeString()}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-white text-gray-800 rounded-lg rounded-bl-none px-4 py-2 shadow">
-                    <div className="flex space-x-2">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                ))}
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-white text-gray-800 rounded-lg rounded-bl-none px-4 py-2 shadow">
+                      <div className="flex space-x-2">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
 
-            {/* Message Input or Continue Button */}
-            <div className="p-4 border-t border-gray-200 bg-white">
-              {setupComplete ? (
-                <button
-                  onClick={handleContinueToDashboard}
-                  className="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-                >
-                  Continue to Dashboard
-                </button>
-              ) : (
+              {/* Message Input or Continue Button */}
+              <div className="p-4 border-t border-gray-200 bg-white">
                 <div className="relative flex items-end">
                   <textarea
                     rows={1}
@@ -624,9 +651,9 @@ const AgentSetupPage = () => {
                     <Send size={16} className={isLoading ? 'animate-pulse' : ''} />
                   </button>
                 </div>
-              )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
