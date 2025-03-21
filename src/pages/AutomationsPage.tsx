@@ -9,11 +9,19 @@ import { Textarea } from '../components/ui/textarea';
 import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { PlusCircle, Trash2, Save, RefreshCw, AlertTriangle } from 'lucide-react';
+import { PlusCircle, Trash2, Save, RefreshCw, AlertTriangle, Brain } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { getUserConfig, saveUserConfig, updateEmbeddings, checkEmbeddingsAvailable } from '../services/supabase';
+import AgentBehaviorRules from '../components/AgentBehaviorRules';
 
 // Mock functions to replace Supabase - replaced with actual Supabase functions
+
+interface BehaviorRule {
+  id: string;
+  rule: string;
+  description: string;
+  enabled: boolean;
+}
 
 interface AgentConfig {
   id: number;
@@ -53,6 +61,7 @@ interface AgentConfig {
     automation_preferences: string;
     lead_process: string;
   };
+  behavior_rules?: BehaviorRule[];
 }
 
 const AutomationsPage = () => {
@@ -141,7 +150,8 @@ const AutomationsPage = () => {
               required_integrations: [],
               automation_preferences: '',
               lead_process: ''
-            }
+            },
+            behavior_rules: parsedConfig.behavior_rules || []
           };
           
           setConfig(formattedConfig);
@@ -185,7 +195,8 @@ const AutomationsPage = () => {
               required_integrations: [],
               automation_preferences: '',
               lead_process: ''
-            }
+            },
+            behavior_rules: []
           });
         }
       } catch (error) {
@@ -228,7 +239,8 @@ const AutomationsPage = () => {
             required_integrations: [],
             automation_preferences: '',
             lead_process: ''
-          }
+          },
+          behavior_rules: []
         });
       } finally {
         setLoading(false);
@@ -285,6 +297,15 @@ const AutomationsPage = () => {
             JSON.stringify(config.business_processes),
             'business_processes'
           );
+          
+          // Behavior rules embeddings
+          if (config.behavior_rules && config.behavior_rules.length > 0) {
+            await updateEmbeddings(
+              userUID,
+              JSON.stringify(config.behavior_rules),
+              'behavior_rules'
+            );
+          }
           
           // Complete config embeddings
           await updateEmbeddings(
@@ -350,7 +371,7 @@ const AutomationsPage = () => {
       }
     });
   };
-
+  
   const updateRole = (index: number, value: string) => {
     if (!config) return;
     
@@ -365,7 +386,7 @@ const AutomationsPage = () => {
       }
     });
   };
-
+  
   const removeRole = (index: number) => {
     if (!config) return;
     
@@ -380,9 +401,9 @@ const AutomationsPage = () => {
       }
     });
   };
-
-  // Communication Style handlers
-  const updateCommunicationStyle = (field: string, value: string | boolean) => {
+  
+  // Communication style handlers
+  const updateCommunicationStyle = (field: string, value: any) => {
     if (!config) return;
     
     setConfig({
@@ -393,7 +414,7 @@ const AutomationsPage = () => {
       }
     });
   };
-
+  
   // Scenarios handlers
   const addScenario = () => {
     if (!config) return;
@@ -408,7 +429,7 @@ const AutomationsPage = () => {
       }
     });
   };
-
+  
   const updateScenario = (index: number, value: string) => {
     if (!config) return;
     
@@ -423,7 +444,7 @@ const AutomationsPage = () => {
       }
     });
   };
-
+  
   const removeScenario = (index: number) => {
     if (!config) return;
     
@@ -438,21 +459,33 @@ const AutomationsPage = () => {
       }
     });
   };
-
-  // Knowledge Base handlers
+  
+  // Knowledge base handlers
   const updateKnowledgeBase = (field: string, value: string) => {
     if (!config) return;
     
-    setConfig({
-      ...config,
-      services: {
-        ...config.services,
-        [field === 'faq_url' ? 'pricing_info' : 'delivery_areas']: value
-      }
-    });
+    if (field === 'product_catalog') {
+      const features = value.split('\n').filter(feature => feature.trim() !== '');
+      
+      setConfig({
+        ...config,
+        services: {
+          ...config.services,
+          special_features: features
+        }
+      });
+    } else {
+      setConfig({
+        ...config,
+        services: {
+          ...config.services,
+          pricing_info: value
+        }
+      });
+    }
   };
-
-  // Compliance Rules handlers
+  
+  // Compliance handlers
   const updateComplianceRules = (field: string, value: string) => {
     if (!config) return;
     
@@ -460,15 +493,15 @@ const AutomationsPage = () => {
       ...config,
       integrations: {
         ...config.integrations,
-        [field === 'gdpr_disclaimer' ? 'automation_preferences' : 'lead_process']: value
+        automation_preferences: value
       }
     });
   };
-
-  const updateForbiddenWords = (wordsStr: string) => {
+  
+  const updateForbiddenWords = (forbiddenWords: string) => {
     if (!config) return;
     
-    const words = wordsStr.split(',').map(word => word.trim());
+    const words = forbiddenWords.split(',').map(word => word.trim());
     
     setConfig({
       ...config,
@@ -479,74 +512,74 @@ const AutomationsPage = () => {
     });
   };
 
+  // Behavior rules handlers
+  const updateBehaviorRules = (rules: BehaviorRule[]) => {
+    if (!config) return;
+    
+    setConfig({
+      ...config,
+      behavior_rules: rules
+    });
+  };
+  
   if (loading) {
     return (
-      <div className="flex h-screen">
-        <NavSidebar />
-        <div className="flex-1 ml-20 p-8 flex items-center justify-center">
-          <div className="flex flex-col items-center">
-            <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
-            <p className="mt-4 text-gray-600">Loading agent configuration...</p>
-          </div>
+      <div className="h-screen flex items-center justify-center">
+        <div className="flex flex-col items-center">
+          <RefreshCw className="h-8 w-8 text-blue-500 animate-spin mb-4" />
+          <p className="text-gray-700">Loading agent configuration...</p>
         </div>
       </div>
     );
   }
-
+  
   if (!config) {
     return (
-      <div className="flex h-screen">
-        <NavSidebar />
-        <div className="flex-1 ml-20 p-8">
-          <div className="max-w-4xl mx-auto">
-            <h1 className="text-3xl font-bold text-gray-900 mb-4">WhatsApp AI Agent Configuration</h1>
-            <p className="text-red-500">Failed to load agent configuration. Please try again later.</p>
-          </div>
+      <div className="h-screen flex items-center justify-center">
+        <div className="bg-red-50 p-6 rounded-lg border border-red-100 max-w-md text-center">
+          <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-red-700 mb-2">Configuration Error</h2>
+          <p className="text-gray-700 mb-4">
+            We couldn't load your agent configuration. Please try refreshing the page or contact support.
+          </p>
+          <Button onClick={() => window.location.reload()}>
+            Refresh Page
+          </Button>
         </div>
       </div>
     );
   }
-
+  
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen bg-gray-50">
       <NavSidebar />
-      <div className="flex-1 ml-20 p-8 overflow-y-auto">
-        <div className="max-w-4xl mx-auto">
+      <div className="flex-1 ml-16 p-6 overflow-y-auto">
+        <div className="container mx-auto max-w-6xl">
           <div className="flex justify-between items-center mb-6">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">WhatsApp AI Agent Configuration</h1>
-              <p className="text-gray-600 mt-2">
-                Edit and customize your agent settings here
-              </p>
+              <h1 className="text-2xl font-bold">Agent Configuration</h1>
+              <p className="text-gray-500">Customize how your AI agent interacts with customers</p>
             </div>
             <Button onClick={handleSave} disabled={saving} className="flex items-center gap-2">
-              {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              {saving ? 'Saving...' : 'Save Changes'}
+              {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save Changes
             </Button>
           </div>
           
-          <p className="text-gray-600 mb-4">
-            Customize how your WhatsApp AI agent interacts with your customers. Changes will be applied immediately after saving.
-          </p>
-          
-          {/* Show warning if embeddings are not available */}
-          {embeddingsAvailable === false && (
-            <div className="mb-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start">
-              <AlertTriangle className="text-yellow-500 mr-3 mt-0.5" size={18} />
-              <p className="text-sm text-yellow-700">
-                OpenAI embeddings are not available. Your configuration will be saved, but advanced search features may be limited.
-              </p>
-            </div>
-          )}
-          
           <Tabs defaultValue="company">
-            <TabsList className="mb-6">
-              <TabsTrigger value="company">Company Info</TabsTrigger>
+            <TabsList className="grid grid-cols-3 md:grid-cols-7 mb-8">
+              <TabsTrigger value="company">Company</TabsTrigger>
               <TabsTrigger value="roles">Roles</TabsTrigger>
               <TabsTrigger value="communication">Communication</TabsTrigger>
               <TabsTrigger value="scenarios">Scenarios</TabsTrigger>
-              <TabsTrigger value="knowledge">Knowledge Base</TabsTrigger>
+              <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
               <TabsTrigger value="compliance">Compliance</TabsTrigger>
+              <TabsTrigger value="behavior">
+                <span className="flex items-center gap-1">
+                  <Brain className="h-4 w-4" />
+                  Behavior
+                </span>
+              </TabsTrigger>
             </TabsList>
             
             {/* Company Info Tab */}
@@ -827,6 +860,14 @@ const AutomationsPage = () => {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* Behavior Rules Tab */}
+            <TabsContent value="behavior">
+              <AgentBehaviorRules 
+                behaviorRules={config.behavior_rules || []}
+                onRulesChange={updateBehaviorRules}
+              />
             </TabsContent>
           </Tabs>
         </div>
