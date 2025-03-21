@@ -36,6 +36,15 @@ ChatMimic Connect is a WhatsApp AI agent management platform that allows busines
 - [x] Team assignment 
 - [x] Workflow status tracking
 
+### Google Sheets Integration
+- OAuth-based authentication with Google
+- Automatic data extraction from WhatsApp messages using AI
+- Custom column mapping with predefined and custom fields
+- Real-time synchronization with new WhatsApp messages
+- Token refresh mechanism for persistent access
+- Test functionality to verify integration
+- Multiple configuration support for different data collection needs
+
 ---
 
 ## Technical Architecture
@@ -47,6 +56,7 @@ ChatMimic Connect is a WhatsApp AI agent management platform that allows busines
 - [x] Chat dashboard with lifecycle sidebar
 - [x] Automations page
 - [x] Settings page
+- [x] Google Sheets integration page with custom icons
 
 ### Backend
 - [x] Firebase for authentication and real-time data
@@ -58,6 +68,13 @@ ChatMimic Connect is a WhatsApp AI agent management platform that allows busines
 - [x] Firebase Firestore collections for users and messages
 - [x] Supabase PostgreSQL for configuration and embeddings
 - [x] Vector similarity search using pgvector
+
+### UI/UX Components
+- [x] Sidebar navigation with platform-specific icons
+- [x] Custom Google Sheets icon using the official spreadsheet design
+- [x] Responsive chat interface
+- [x] User-friendly form components
+- [x] Intuitive configuration panels
 
 ---
 
@@ -83,6 +100,12 @@ ChatMimic Connect is a WhatsApp AI agent management platform that allows busines
 - [ ] Advanced lead management with scoring
 - [ ] Mobile application
 - [ ] Team collaboration features
+
+### Future Integrations (Planned)
+- CRM systems (Salesforce, HubSpot, etc.)
+- Calendar systems (Google Calendar, Outlook)
+- E-commerce platforms (Shopify, WooCommerce)
+- Payment gateways (Stripe, PayPal)
 
 ---
 

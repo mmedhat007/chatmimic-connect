@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { MessageSquare, BarChart, Menu, LogOut, Settings, Users, Send, Grid, Workflow, Table } from 'lucide-react';
+import { MessageSquare, BarChart, Menu, LogOut, Settings, Users, Send, Grid, Workflow } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser } from '../services/firebase';
+import GoogleSheetsIcon from './icons/GoogleSheetsIcon';
 
 const NavSidebar = () => {
   const location = useLocation();
@@ -22,27 +23,40 @@ const NavSidebar = () => {
     { icon: Send, text: 'Broadcast', path: '/broadcast' },
     { icon: BarChart, text: 'Analytics', path: '/analytics' },
     { icon: Workflow, text: 'Automations', path: '/automations' },
-    { icon: Table, text: 'Google Sheets', path: '/google-sheets' },
+    { 
+      icon: GoogleSheetsIcon, 
+      text: 'Google Sheets', 
+      path: '/google-sheets',
+      iconColor: '#0F9D58' // Google Sheets green color
+    },
   ];
 
   return (
     <div className="bg-chatmimic-blue text-white h-screen w-16 flex flex-col fixed">
       {/* Main navigation items */}
       <div className="flex flex-col items-center pt-6 gap-6">
-        {mainNavItems.map((item) => (
-          <Link
-            key={item.path}
-            to={item.path}
-            className={`p-3 rounded-lg transition-colors mx-2 flex justify-center ${
-              location.pathname === item.path
-                ? 'bg-chatmimic-blue-dark'
-                : 'hover:bg-chatmimic-blue-dark'
-            }`}
-            title={item.text}
-          >
-            <item.icon size={24} />
-          </Link>
-        ))}
+        {mainNavItems.map((item) => {
+          const IconComponent = item.icon;
+          const isActive = location.pathname === item.path;
+          
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`p-3 rounded-lg transition-colors mx-2 flex justify-center ${
+                isActive
+                  ? 'bg-chatmimic-blue-dark'
+                  : 'hover:bg-chatmimic-blue-dark'
+              }`}
+              title={item.text}
+            >
+              <IconComponent 
+                size={24} 
+                color={item.iconColor && !isActive ? item.iconColor : undefined}
+              />
+            </Link>
+          );
+        })}
       </div>
 
       {/* Bottom section with Platform Select, Settings and Logout */}

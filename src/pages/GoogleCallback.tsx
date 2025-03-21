@@ -1,8 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { doc, updateDoc, getFirestore } from 'firebase/firestore';
-import { auth } from '../services/firebase';
+import { doc, updateDoc, getFirestore, getDoc } from 'firebase/firestore';
+import { auth, db, getCurrentUser } from '../services/firebase';
 import { RefreshCw } from 'lucide-react';
+import { startWhatsAppGoogleSheetsIntegration } from '../services/whatsappGoogleIntegration';
+
+// Constants for Google OAuth
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET;
+const GOOGLE_REDIRECT_URI = `${window.location.origin}/google-callback`;
 
 interface TokenResponse {
   access_token: string;
@@ -17,45 +23,77 @@ const GoogleCallback: React.FC = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const getTokenFromCode = async (code: string) => {
+    // Function to directly exchange the code for tokens with Google OAuth API
+    const exchangeCodeForToken = async (code: string): Promise<TokenResponse> => {
+      const tokenEndpoint = 'https://oauth2.googleapis.com/token';
+      
+      const params = new URLSearchParams();
+      params.append('code', code);
+      params.append('client_id', GOOGLE_CLIENT_ID);
+      params.append('client_secret', GOOGLE_CLIENT_SECRET);
+      params.append('redirect_uri', GOOGLE_REDIRECT_URI);
+      params.append('grant_type', 'authorization_code');
+      
+      const response = await fetch(tokenEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params,
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Google OAuth error: ${errorData.error_description || errorData.error || 'Unknown error'}`);
+      }
+      
+      return await response.json();
+    };
+
+    const handleTokenExchange = async (code: string) => {
       try {
-        const tokenEndpoint = import.meta.env.VITE_API_URL || '/api/google/token';
-        const response = await fetch(tokenEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ code }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to exchange code for token');
-        }
-
-        const tokenData: TokenResponse = await response.json();
+        const tokenData = await exchangeCodeForToken(code);
         
-        // Save token to Firebase
+        // Get user ID from either auth or localStorage
         const user = auth.currentUser;
-        if (!user) {
+        const userUID = user?.uid || getCurrentUser();
+        
+        if (!userUID) {
+          console.error('No user ID available from auth or localStorage');
           throw new Error('User not authenticated');
         }
 
-        const db = getFirestore();
-        await updateDoc(doc(db, 'Users', user.uid), {
-          'credentials.googleSheetsOAuth': {
-            accessToken: tokenData.access_token,
-            refreshToken: tokenData.refresh_token,
-            expiresAt: Date.now() + (tokenData.expires_in * 1000),
-          }
+        console.log('Using user ID:', userUID);
+        
+        const userDocRef = doc(db, 'Users', userUID);
+        const userDoc = await getDoc(userDocRef);
+
+        if (!userDoc.exists()) {
+          console.error('User document not found for ID:', userUID);
+          navigate('/google-sheets');
+          return;
+        }
+
+        // Format the token data with expiration time
+        const formattedTokenData = {
+          accessToken: tokenData.access_token,
+          refreshToken: tokenData.refresh_token,
+          expiresAt: Date.now() + tokenData.expires_in * 1000,
+        };
+
+        // Update Firestore with the token data
+        await updateDoc(userDocRef, {
+          'credentials.googleSheetsOAuth': formattedTokenData,
         });
 
-        // Navigate back to Google Sheets page
-        navigate('/google-sheets', { 
-          state: { success: true, message: 'Successfully connected to Google Sheets!' } 
-        });
+        // Start the WhatsApp Google Sheets integration listener
+        startWhatsAppGoogleSheetsIntegration();
+
+        console.log('Successfully connected to Google Sheets!');
+        navigate('/google-sheets');
       } catch (error) {
-        console.error('Error exchanging code for token:', error);
-        setError('Failed to connect Google Sheets. Please try again.');
+        console.error('Error saving token to Firebase:', error);
+        setError('Failed to save Google Sheets credentials');
         setLoading(false);
       }
     };
@@ -63,16 +101,16 @@ const GoogleCallback: React.FC = () => {
     // Get the authorization code from URL
     const params = new URLSearchParams(location.search);
     const code = params.get('code');
-    const error = params.get('error');
+    const urlError = params.get('error');
 
-    if (error) {
+    if (urlError) {
       setError('Authorization was cancelled or denied.');
       setLoading(false);
       return;
     }
 
     if (code) {
-      getTokenFromCode(code);
+      handleTokenExchange(code);
     } else {
       setError('No authorization code received.');
       setLoading(false);

@@ -66,7 +66,12 @@ The WhatsApp setup follows a guided 5-step process to help users connect their W
   - WhatsApp_Data document
   - Initial chat template
   - Welcome message template
-- System updates the user's workflow status with `setup_completed: false` to indicate agent setup is still needed
+- System initializes the WhatsApp workflow with:
+  - `executions_used`: 0
+  - `limit`: Default limit (based on plan)
+  - `reset_date`: Next month's date
+  - `paid`: Based on user's plan
+  - `setup_completed`: Set to false to indicate agent setup is still needed
 - System saves a record in localStorage to track WhatsApp setup completion
 - System redirects to Agent Setup page
 
@@ -154,4 +159,42 @@ The system uses a dual-storage approach for optimal performance:
 3. WhatsApp message history in Firebase (real-time database)
 4. Embeddings for semantic search in Supabase (pgvector)
 
-This approach balances security, performance, and user experience. 
+This approach balances security, performance, and user experience.
+
+## Google Sheets Integration Flow
+
+### Initial Setup
+1. User navigates to the Google Sheets page from the sidebar or via prompt after agent setup
+2. User clicks "Connect Google Sheets" button
+3. User is redirected to Google OAuth consent screen
+4. User authorizes the application to access their Google Sheets
+5. User is redirected back to the application with a success message
+6. OAuth credentials are stored in the user's document under `credentials.googleSheetsOAuth`
+
+### Configuration
+1. User selects a Google Sheet from their Google Drive
+2. User configures columns to extract from WhatsApp messages:
+   - Predefined columns (Name, Phone, Product Interest, etc.)
+   - Custom columns with AI extraction prompts
+3. User saves the configuration
+4. Configurations are stored in the user's document under `workflows.whatsapp_agent.sheetConfigs`
+5. User can create multiple configurations for different data collection needs
+6. User can toggle configurations on/off as needed
+
+### Data Collection
+1. When a new WhatsApp message arrives, the system checks for active Google Sheets configurations
+2. For each active configuration:
+   - Data is extracted from the message using AI processing
+   - A new row is added to the configured Google Sheet
+   - The system keeps track of processed messages to avoid duplicates
+
+### Testing
+1. User can send a test message to verify the integration
+2. The test message is processed using active configurations
+3. User can verify the data appears in their Google Sheet
+
+### Management
+1. User can edit existing configurations
+2. User can disconnect Google Sheets access
+3. User can view all active configurations
+4. User can create new configurations as needed 

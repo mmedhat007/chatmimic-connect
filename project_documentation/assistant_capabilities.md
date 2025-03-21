@@ -151,4 +151,23 @@ As your AI assistant integrated with your IDE, I'm optimized to enhance your pro
 - Lifecycle status categorization (New Lead, VIP Lead, etc.)
 - Team assignment implementation
 - Workflow status tracking and visualization
-- Contact data hierarchical organization 
+- Contact data hierarchical organization
+
+## Data Extraction and Processing
+
+### AI-Powered Data Extraction
+- Extract structured data from unstructured WhatsApp messages
+- Identify key information points based on configured prompts
+- Support for different data types:
+  - Contact information (names, phone numbers, email addresses)
+  - Product interests and inquiries
+  - Appointment preferences and scheduling requests
+  - Custom data points defined by the user
+- Configurable AI prompts for different extraction needs
+- Integration with Google Sheets for data storage and organization
+
+### Sentiment Analysis
+- Detect customer sentiment in messages
+- Categorize messages as positive, negative, or neutral
+- Identify urgent messages requiring human intervention
+- Track sentiment changes over time 

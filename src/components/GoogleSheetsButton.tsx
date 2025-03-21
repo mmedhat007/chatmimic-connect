@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { FileSpreadsheet, LogOut } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { auth } from '../services/firebase';
+import { getGoogleAuthStatus, authorizeGoogleSheets, revokeGoogleAuth } from '../services/googleSheets';
 
 // Constants for Google OAuth
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
@@ -15,12 +16,11 @@ const GoogleSheetsButton: React.FC = () => {
 
   useEffect(() => {
     // Check if user has authorized Google Sheets
-    // This is a placeholder - implement actual check in googleSheets.ts
     const checkAuth = async () => {
       setLoading(true);
       try {
-        // For now, just assume not authorized - will be implemented in the future
-        setIsAuthorized(false);
+        const authStatus = await getGoogleAuthStatus();
+        setIsAuthorized(authStatus);
       } catch (error) {
         console.error('Error checking Google auth status:', error);
       } finally {
@@ -42,31 +42,24 @@ const GoogleSheetsButton: React.FC = () => {
 
   const handleAuth = async () => {
     if (isAuthorized) {
+      setLoading(true);
       try {
-        // Placeholder for revoking auth - implement in googleSheets.ts
+        await revokeGoogleAuth();
         setIsAuthorized(false);
         toast.success('Google Sheets disconnected');
       } catch (error) {
         console.error('Error revoking Google auth:', error);
         toast.error('Failed to disconnect Google Sheets');
+      } finally {
+        setLoading(false);
       }
     } else {
-      setLoading(true);
       try {
-        // Redirect to Google OAuth flow
-        const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-          `client_id=${GOOGLE_CLIENT_ID}` +
-          `&redirect_uri=${encodeURIComponent(GOOGLE_REDIRECT_URI)}` +
-          `&response_type=code` +
-          `&scope=${encodeURIComponent(GOOGLE_SCOPES)}` +
-          `&access_type=offline` +
-          `&prompt=consent`;
-
-        window.location.href = authUrl;
+        await authorizeGoogleSheets();
+        // Redirect happens in the service, callback will handle the rest
       } catch (error) {
         console.error('Error authorizing Google Sheets:', error);
         toast.error('Failed to connect Google Sheets');
-        setLoading(false);
       }
     }
   };
