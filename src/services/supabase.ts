@@ -52,16 +52,16 @@ export const ensureUserTable = async (uid: string): Promise<boolean> => {
     if (!checkError) {
       console.log('User config table already exists');
       
-      // Check if we need to add the full_config column
+      // Check if we need to add columns
       try {
-        // Run a SQL query to check if full_config column exists
-        const { error: columnCheckError } = await supabase.rpc('check_column_exists', {
+        // Check for full_config column
+        const { error: fullConfigCheckError } = await supabase.rpc('check_column_exists', {
           table_name: 'user_configs',
           column_name: 'full_config'
         });
         
         // If there's an error or the column doesn't exist, add it
-        if (columnCheckError) {
+        if (fullConfigCheckError) {
           console.log('Adding full_config column to user_configs table');
           
           // Add the full_config column if it doesn't exist
@@ -75,8 +75,27 @@ export const ensureUserTable = async (uid: string): Promise<boolean> => {
             // Continue anyway as the basic functionality will still work
           }
         }
+        
+        // Check for behavior_rules column
+        const { error: behaviorRulesCheckError } = await supabase.rpc('check_column_exists', {
+          table_name: 'user_configs',
+          column_name: 'behavior_rules'
+        });
+        
+        // If there's an error or the column doesn't exist, add it
+        if (behaviorRulesCheckError) {
+          console.log('Adding behavior_rules column to user_configs table');
+          
+          // Call the function to add the behavior_rules column
+          const { error: behaviorRulesError } = await supabase.rpc('add_behavior_rules_column');
+          
+          if (behaviorRulesError) {
+            console.error('Error adding behavior_rules column:', behaviorRulesError);
+            // Continue anyway as the basic functionality will still work
+          }
+        }
       } catch (e) {
-        console.error('Error checking/adding full_config column:', e);
+        console.error('Error checking/adding columns:', e);
         // Continue anyway
       }
       
@@ -121,17 +140,52 @@ export const saveUserConfig = async (uid: string, config: any): Promise<boolean>
       return false;
     }
 
+    // Extract behavior_rules if they exist and consolidate into a single description
+    const behaviorRulesArray = config.behavior_rules || [];
+    console.log('[saveUserConfig] Extracting behavior_rules:', behaviorRulesArray);
+    console.log('[saveUserConfig] Number of behavior rules:', behaviorRulesArray.length);
+    
+    // Create a single description from all active rules
+    let consolidatedDescription = "";
+    
+    if (behaviorRulesArray.length > 0) {
+      // Filter enabled rules and extract their descriptions
+      const enabledRules = behaviorRulesArray.filter(rule => rule.enabled);
+      
+      // Combine all rule descriptions with period separators
+      if (enabledRules.length > 0) {
+        consolidatedDescription = enabledRules
+          .map(rule => '.' + rule.description)
+          .join(' ');
+      }
+    }
+    
+    // Create a simplified behavior rules object with the consolidated description
+    const simplifiedBehaviorRules = {
+      rules: [
+        {
+          description: consolidatedDescription
+        }
+      ],
+      last_updated: new Date().toISOString(),
+      version: '1.0'
+    };
+
+    console.log('[saveUserConfig] Created simplified behavior rules object:', simplifiedBehaviorRules);
+
     // Convert config to appropriate format for database
     const configToSave = {
       user_id: uid,
       temperature: 0.7, // Default or extract from config if available
       max_tokens: 500,  // Default or extract from config if available
-      full_config: config // Store the entire configuration object
+      full_config: config, // Store the entire configuration object
+      behavior_rules: simplifiedBehaviorRules // Store simplified behavior rules
     };
 
     // Update or insert based on whether a record exists
     let error;
     if (existingConfig) {
+      console.log('[saveUserConfig] Updating existing config with simplified behavior_rules');
       const { error: updateError } = await supabase
         .from('user_configs')
         .update(configToSave)
@@ -139,6 +193,7 @@ export const saveUserConfig = async (uid: string, config: any): Promise<boolean>
       
       error = updateError;
     } else {
+      console.log('[saveUserConfig] Inserting new config with simplified behavior_rules');
       const { error: insertError } = await supabase
         .from('user_configs')
         .insert(configToSave);
@@ -151,6 +206,7 @@ export const saveUserConfig = async (uid: string, config: any): Promise<boolean>
       return false;
     }
 
+    console.log('[saveUserConfig] Successfully saved config with simplified behavior_rules');
     return true;
   } catch (error) {
     console.error('Error in saveUserConfig:', error);
@@ -175,9 +231,10 @@ export const getUserConfig = async (uid: string): Promise<any> => {
     }
 
     // Get from Supabase if not in localStorage
+    console.log('[getUserConfig] Fetching config from Supabase for user:', uid);
     const { data, error } = await supabase
       .from('user_configs')
-      .select('*')  // Select all columns to get full_config
+      .select('*')  // Select all columns to get full_config and behavior_rules
       .eq('user_id', uid)
       .maybeSingle();
 
@@ -188,12 +245,63 @@ export const getUserConfig = async (uid: string): Promise<any> => {
 
     // If we have full_config, use it
     if (data && data.full_config) {
-      console.log('Retrieved full config from Supabase:', data.full_config);
+      console.log('[getUserConfig] Retrieved full_config from Supabase');
+      
+      // Create a config object with the full_config data
+      let config = data.full_config;
+      
+      // If behavior_rules exist as a separate column, use that value
+      // This overrides any behavior_rules in full_config
+      if (data.behavior_rules) {
+        console.log('[getUserConfig] Found behavior_rules object in dedicated column:', data.behavior_rules);
+        
+        // The behavior_rules in the dedicated column is now a simplified structure
+        // with a single description. We'll need to transform this back into an array
+        // structure that's compatible with the frontend.
+        
+        // Create default behavior rules array
+        let compatibleBehaviorRules = [];
+        
+        if (data.behavior_rules.rules && Array.isArray(data.behavior_rules.rules) && 
+            data.behavior_rules.rules.length > 0 && data.behavior_rules.rules[0].description) {
+          
+          const consolidatedDescription = data.behavior_rules.rules[0].description;
+          console.log('[getUserConfig] Found consolidated description:', consolidatedDescription);
+          
+          // If we have a description, we'll recreate the individual rules
+          // by splitting on period markers
+          if (consolidatedDescription && consolidatedDescription.trim() !== '') {
+            // Split the consolidated description into individual rule descriptions
+            const ruleDescriptions = consolidatedDescription
+              .split('.')
+              .map(desc => desc.trim())
+              .filter(desc => desc !== '');
+              
+            console.log('[getUserConfig] Extracted rule descriptions:', ruleDescriptions);
+            
+            // Create dummy rule objects from the descriptions
+            compatibleBehaviorRules = ruleDescriptions.map((description, index) => ({
+              id: `rule-${index + 1}`,
+              rule: `Rule ${index + 1}`,
+              description: description,
+              enabled: true
+            }));
+          }
+        }
+        
+        console.log('[getUserConfig] Created compatible behavior rules array:', compatibleBehaviorRules);
+        
+        // Set the behavior_rules property to the compatible array
+        config.behavior_rules = compatibleBehaviorRules;
+      } else {
+        console.log('[getUserConfig] No behavior_rules found in dedicated column');
+      }
       
       // Save to localStorage for future use
-      localStorage.setItem(`user_${uid}_config`, JSON.stringify(data.full_config));
+      localStorage.setItem(`user_${uid}_config`, JSON.stringify(config));
+      console.log('[getUserConfig] Saved merged config to localStorage');
       
-      return data.full_config;
+      return config;
     }
 
     // If no full_config, return a default structure
@@ -230,7 +338,8 @@ export const getUserConfig = async (uid: string): Promise<any> => {
         required_integrations: [],
         automation_preferences: '',
         lead_process: ''
-      }
+      },
+      behavior_rules: [] // Initialize with empty behavior_rules array
     };
 
     return defaultConfig;
