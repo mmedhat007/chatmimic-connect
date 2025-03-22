@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS user_configs (
   temperature FLOAT DEFAULT 0.7,
   max_tokens INTEGER DEFAULT 500,
   full_config JSONB, -- Added column needed by our application
+  behavior_rules JSONB, -- Added dedicated column for behavior rules
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -216,6 +217,7 @@ BEGIN
       temperature FLOAT DEFAULT 0.7,
       max_tokens INTEGER DEFAULT 500,
       full_config JSONB,
+      behavior_rules JSONB, -- Added behavior_rules column
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
@@ -270,4 +272,25 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Add full_config column to user_configs if it doesn't exist yet
-SELECT add_jsonb_column('user_configs', 'full_config'); 
+SELECT add_jsonb_column('user_configs', 'full_config');
+
+-- Function to add behavior_rules JSONB column to user_configs table
+CREATE OR REPLACE FUNCTION add_behavior_rules_column()
+RETURNS void AS $$
+BEGIN
+  -- Check if column exists first
+  IF NOT EXISTS (
+    SELECT FROM information_schema.columns
+    WHERE table_schema = 'public'
+    AND information_schema.columns.table_name = 'user_configs'
+    AND information_schema.columns.column_name = 'behavior_rules'
+  ) THEN
+    -- Add the column
+    ALTER TABLE public.user_configs ADD COLUMN behavior_rules JSONB;
+    RAISE NOTICE 'Added behavior_rules column to user_configs';
+  END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Add the behavior_rules column if it doesn't exist yet
+SELECT add_behavior_rules_column(); 

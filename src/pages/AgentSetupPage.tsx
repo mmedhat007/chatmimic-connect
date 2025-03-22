@@ -4,8 +4,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { getCurrentUser } from '../services/firebase';
 import NavSidebar from '../components/NavSidebar';
 import axios from 'axios';
-import { saveUserConfig, createEmbeddings, checkEmbeddingsAvailable } from '../services/supabase';
+import { saveUserConfig, createEmbeddings, checkEmbeddingsAvailable, getUserConfig } from '../services/supabase';
 import { toast } from 'react-hot-toast';
+import { supabase } from '../services/supabase';
+import TestResultsDisplay from '../components/TestResultsDisplay';
 
 // OpenAI API configuration
 // In a production environment, this should be stored securely and called from a backend
@@ -144,6 +146,54 @@ const generateIndustryStructure = async (industry: string): Promise<any> => {
   }
 };
 
+// Function to verify that behavior rules were saved correctly
+const verifyBehaviorRulesSave = async (uid: string) => {
+  try {
+    console.log('Verifying behavior rules were saved correctly...');
+    
+    // We need to directly query Supabase to check both columns
+    const { data, error } = await supabase
+      .from('user_configs')
+      .select('full_config, behavior_rules')
+      .eq('user_id', uid)
+      .maybeSingle();
+    
+    if (error) {
+      console.error('Error fetching saved config:', error);
+      return false;
+    }
+    
+    if (!data) {
+      console.error('No data found for user:', uid);
+      return false;
+    }
+    
+    // Check if behavior_rules exists in the dedicated column
+    console.log('Behavior rules from dedicated column:', data.behavior_rules);
+    console.log('Number of behavior rules in dedicated column:', 
+      Array.isArray(data.behavior_rules) ? data.behavior_rules.length : 'Not an array');
+    
+    // Check if behavior_rules exists in full_config
+    if (data.full_config && data.full_config.behavior_rules) {
+      console.log('Behavior rules from full_config:', data.full_config.behavior_rules);
+      console.log('Number of behavior rules in full_config:', 
+        Array.isArray(data.full_config.behavior_rules) ? data.full_config.behavior_rules.length : 'Not an array');
+    } else {
+      console.error('No behavior_rules found in full_config');
+    }
+    
+    // Also test getUserConfig to ensure it correctly merges behavior_rules
+    const configFromGet = await getUserConfig(uid);
+    console.log('Config from getUserConfig:', configFromGet);
+    console.log('Behavior rules from getUserConfig:', configFromGet.behavior_rules);
+    
+    return true;
+  } catch (err) {
+    console.error('Error in verification:', err);
+    return false;
+  }
+};
+
 const AgentSetupPage = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -172,9 +222,9 @@ const AgentSetupPage = () => {
       content: `You are an AI assistant specialized in configuring WhatsApp messaging bots for businesses. Your goal is to gather information that will optimize how the bot behaves and responds to customers.
 
       IMPORTANT GUIDELINES:
-      - Adapt your questions based on the business type provided (e.g., real estate, retail, restaurant)
-      - Once you know the business type, ask ONLY industry-specific questions relevant to that business
-      - Never ask generic questions that could apply to any business after learning their industry
+      - Begin by asking for the business name and industry/type
+      - Based on the business type, ask both general and industry-specific questions
+      - Ask relevant questions about how the business wants to engage with customers
       - Focus on questions that directly impact messaging capabilities and customer experience
       - Prioritize questions about communication style, customer handling, and common scenarios
       - Be efficient - don't ask for information that isn't relevant to messaging behavior
@@ -221,13 +271,9 @@ const AgentSetupPage = () => {
         "company_info": {
           "name": "",
           "industry": "",
-          "website": "",
           "locations": [],
-          "contact_info": ""
-        },
-        "services": {
-          "main_offerings": [],
-          "special_features": []
+          "contact_info": "",
+          "differentiators": ""
         },
         "communication_style": {
           "tone": "",
@@ -235,18 +281,25 @@ const AgentSetupPage = () => {
           "emoji_usage": false,
           "response_length": ""
         },
-        "business_processes": {
-          "common_questions": [],
-          "special_requirements": []
+        "scenarios": [
+          {
+            "name": "",
+            "workflow": ""
+          }
+        ],
+        "knowledge_base": {
+          "faq_url": "",
+          "product_catalog": "",
+          "industry_resources": []
         },
-        "integrations": {
-          "required_integrations": [],
-          "automation_preferences": "",
-          "lead_process": ""
+        "compliance_rules": {
+          "gdpr_disclaimer": "",
+          "forbidden_words": [],
+          "industry_regulations": []
         }
       }
 
-      Start by asking for their business name and type/industry. Then immediately focus on how they want their WhatsApp bot to communicate with customers based on their specific industry.`
+      Start by asking for their business name and type/industry. Then ask both general and industry-specific questions to build a complete profile for their WhatsApp messaging bot.`
     },
     {
       role: "assistant", 
@@ -339,86 +392,148 @@ const AgentSetupPage = () => {
     setIsLoading(true);
 
     try {
-      // Skip the OpenAI call and immediately complete setup with test data
-      const testData = {
-        company_info: {
-          name: "UpWest Real Estate",
-          industry: "Real Estate",
-          website: "https://upwest-realestate.com",
-          locations: ["Cairo", "Alexandria", "New Cairo"],
-          contact_info: "sales@upwest-realestate.com | +20 123 456 7890"
-        },
-        services: {
-          main_offerings: ["Residential Properties", "Commercial Properties", "Property Management", "Investment Consulting"],
-          special_features: ["Virtual Tours", "3D Floor Plans", "Property Valuation", "Mortgage Assistance"]
-        },
-        communication_style: {
-          tone: "Professional yet friendly",
-          languages: ["English", "Arabic"],
-          emoji_usage: true,
-          response_length: "Balanced - detailed for property info, concise for general inquiries"
-        },
-        business_processes: {
-          common_questions: [
-            "What properties are available in New Cairo?", 
-            "How do I schedule a viewing?", 
-            "What documents are required for purchase?",
-            "Do you offer payment plans?",
-            "What are the prices for units in UpWest Compound?"
-          ],
-          special_requirements: [
-            "ID verification required for viewings",
-            "Pre-qualification for mortgage inquiries",
-            "Appointment scheduling for property tours"
-          ]
-        },
-        integrations: {
-          required_integrations: ["Calendar", "CRM", "Document Signing"],
-          automation_preferences: "High automation for initial inquiries, human handoff for serious buyers",
-          lead_process: "Collect contact details, property preferences, budget range, and timeline before human agent follows up"
-        },
-        behavior_rules: [
-          {
-            id: "rule-ask-name",
-            rule: "Ask for customer name after initial inquiry",
-            description: "The agent will always ask for the customer's name if they haven't provided it after their first message.",
-            enabled: true
-          },
-          {
-            id: "rule-qualify",
-            rule: "Qualify leads before providing detailed information",
-            description: "The agent will ask qualifying questions (budget, timeline, requirements) before sharing product/service details.",
-            enabled: true
-          }
-        ]
-      };
+      // Update the conversation history
+      const updatedHistory = [
+        ...conversationHistory,
+        { role: "user", content: userMessage.text }
+      ];
+      setConversationHistory(updatedHistory);
 
-      // Add a success message to the chat
+      // Call OpenAI API for chat completion
+      const response = await axios.post(
+        OPENAI_API_URL,
+        {
+          model: "gpt-4o-mini",
+          messages: updatedHistory,
+          temperature: 0.7
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${OPENAI_API_KEY}`
+          }
+        }
+      );
+
+      const botResponse = response.data.choices[0].message.content;
+      
+      // Update conversation history with bot's response
+      setConversationHistory(prev => [...prev, { role: "assistant", content: botResponse }]);
+
+      // Check if the response includes the completion marker
+      if (botResponse.includes("SETUP_COMPLETE")) {
+        // Extract JSON data from the response
+        try {
+          const jsonStartIndex = botResponse.indexOf('{');
+          const jsonEndIndex = botResponse.lastIndexOf('}');
+          
+          if (jsonStartIndex === -1 || jsonEndIndex === -1) {
+            throw new Error("JSON data not found in response");
+          }
+          
+          const jsonData = botResponse.substring(jsonStartIndex, jsonEndIndex + 1);
+          const configData = JSON.parse(jsonData);
+          
+          // Update business info state
+          setBusinessInfo(prev => ({
+            ...prev,
+            ...configData,
+            behavior_rules: [
+              {
+                id: "rule-ask-name",
+                rule: "Ask for customer name after initial inquiry",
+                description: "The agent will always ask for the customer's name if they haven't provided it after their first message.",
+                enabled: true
+              },
+              {
+                id: "rule-qualify",
+                rule: "Qualify leads before providing detailed information",
+                description: "The agent will ask qualifying questions (budget, timeline, requirements) before sharing product/service details.",
+                enabled: true
+              },
+              {
+                id: "rule-handoff",
+                rule: "Hand off to human agent after 3 messages",
+                description: "The agent will suggest connecting with a human agent after 3 back-and-forth messages.",
+                enabled: false
+              }
+            ]
+          }));
+          
+          // Save to Supabase
+          const saveSuccess = await saveToSupabase(userUID, {
+            ...configData,
+            behavior_rules: [
+              {
+                id: "rule-ask-name",
+                rule: "Ask for customer name after initial inquiry",
+                description: "The agent will always ask for the customer's name if they haven't provided it after their first message.",
+                enabled: true
+              },
+              {
+                id: "rule-qualify",
+                rule: "Qualify leads before providing detailed information",
+                description: "The agent will ask qualifying questions (budget, timeline, requirements) before sharing product/service details.",
+                enabled: true
+              },
+              {
+                id: "rule-handoff",
+                rule: "Hand off to human agent after 3 messages",
+                description: "The agent will suggest connecting with a human agent after 3 back-and-forth messages.",
+                enabled: false
+              }
+            ]
+          });
+          
+          // Verify behavior rules save
+          if (saveSuccess) {
+            await verifyBehaviorRulesSave(userUID);
+          
+            // Add a success message
+            const completionMessage: Message = {
+              id: `bot-completion-${Date.now().toString()}`,
+              text: `✅ Great! Your WhatsApp agent setup is complete.\n\nI've saved your configuration with the following details:\n- Business: ${configData.company_info?.name || 'Your business'}\n- Industry: ${configData.company_info?.industry || 'Your industry'}\n\nYour agent is now equipped with default behavior rules:\n- Ask for customer name after initial inquiry\n- Qualify leads before providing detailed information\n\nYou can customize these rules and more in the Automations page.`,
+              sender: 'bot',
+              timestamp: new Date()
+            };
+            
+            setMessages(prev => [...prev, completionMessage]);
+            
+            // Allow user to see completion message before redirection
+            setTimeout(() => {
+              setSetupComplete(true);
+            }, 3000);
+            
+            setIsLoading(false);
+            return;
+          }
+        } catch (jsonError) {
+          console.error("Error parsing JSON from OpenAI response:", jsonError);
+          // Continue with normal response if JSON parsing fails
+        }
+      }
+
+      // Add the bot's response as a message
       const botMessage: Message = {
         id: `bot-${Date.now().toString()}`,
-        text: "Thank you for setting up your UpWest Real Estate WhatsApp AI agent! 🏢🔑\n\nYour agent is now configured to handle property inquiries, schedule viewings, and collect lead information for your team. The agent will communicate in both English and Arabic with a professional yet friendly tone.\n\nYou can now access your WhatsApp dashboard and start engaging with potential clients. Your AI agent will automatically handle initial inquiries and transfer serious buyers to your sales team.",
+        text: botResponse,
         sender: 'bot',
         timestamp: new Date()
       };
       
       setMessages(prev => [...prev, botMessage]);
-      
-      // Save to Supabase
-      console.log("Saving data to Supabase...");
-      const saveSuccess = await saveToSupabase(userUID, testData);
-      console.log("Save to Supabase result:", saveSuccess);
-      
-      setSetupComplete(true);
     } catch (error) {
-      console.error("Error in test setup:", error);
-      // Fallback message
-      const botMessage: Message = {
+      console.error("Error processing message:", error);
+      
+      // Add an error message
+      const errorMessage: Message = {
         id: `error-${Date.now().toString()}`,
-        text: "I'm having trouble processing your request. Please try again or contact support if the issue persists.",
+        text: "Sorry, I encountered an error. Please try again or contact support.",
         sender: 'bot',
         timestamp: new Date()
       };
-      setMessages(prev => [...prev, botMessage]);
+      
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
@@ -434,8 +549,11 @@ const AgentSetupPage = () => {
     }
     
     try {
-      // Save configuration to Supabase (now just stores temperature and max_tokens)
-      // Determine values based on the config
+      // Log the behavior rules being saved
+      console.log('Behavior rules being saved:', config.behavior_rules);
+      console.log('Number of behavior rules:', config.behavior_rules?.length || 0);
+      
+      // Save configuration to Supabase (now includes behavior_rules in dedicated column)
       const saveResult = await saveUserConfig(uid, config);
       
       if (!saveResult) {
@@ -443,7 +561,7 @@ const AgentSetupPage = () => {
         return false;
       }
       
-      console.log('Successfully saved config to Supabase');
+      console.log('Successfully saved config to Supabase with behavior_rules in both full_config and dedicated column');
       
       // Save the full configuration to localStorage to avoid repeated setup prompts
       localStorage.setItem(`user_${uid}_config`, JSON.stringify(config));
@@ -487,6 +605,7 @@ const AgentSetupPage = () => {
           
           // Behavior rules embeddings
           if (config.behavior_rules && config.behavior_rules.length > 0) {
+            console.log('Creating embeddings for behavior rules:', config.behavior_rules);
             await createEmbeddings(
               uid,
               JSON.stringify(config.behavior_rules),
@@ -544,6 +663,12 @@ const AgentSetupPage = () => {
                 </div>
                 <h2 className="text-2xl font-semibold text-gray-800 mb-2">Setup Complete!</h2>
                 <p className="text-gray-600 mb-6">Your WhatsApp agent is now configured and ready to use.</p>
+              </div>
+              
+              {/* Display test results */}
+              <div className="mb-8">
+                <h3 className="text-lg font-semibold mb-4">Test Results</h3>
+                <TestResultsDisplay />
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
