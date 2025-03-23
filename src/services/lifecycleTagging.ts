@@ -33,6 +33,8 @@ export const saveLifecycleTagConfig = async (config: LifecycleTagConfig) => {
   const userUID = getCurrentUser();
   if (!userUID) throw new Error('No user logged in');
 
+  console.log('Saving lifecycle tag config:', { config });
+
   const userDoc = await getDoc(doc(db, 'Users', userUID));
   if (!userDoc.exists()) throw new Error('User document not found');
   
@@ -47,31 +49,41 @@ export const saveLifecycleTagConfig = async (config: LifecycleTagConfig) => {
   // Get current lifecycleTagConfigs or initialize if it doesn't exist
   const lifecycleTagConfigs = whatsappAgent.lifecycleTagConfigs || [];
   
+  console.log('Current lifecycle configs:', lifecycleTagConfigs);
+  
   // Update or add the config
   const existingIndex = lifecycleTagConfigs.findIndex((c: LifecycleTagConfig) => 
     c.id === config.id || c.name === config.name
   );
   
+  let updatedConfig: LifecycleTagConfig;
+  
   if (existingIndex >= 0) {
-    lifecycleTagConfigs[existingIndex] = {
+    updatedConfig = {
       ...config,
       id: config.id || lifecycleTagConfigs[existingIndex].id
     };
+    lifecycleTagConfigs[existingIndex] = updatedConfig;
+    console.log('Updated existing config at index', existingIndex, updatedConfig);
   } else {
     // Generate a new ID if one isn't provided
     const newId = config.id || `lifecycle_${Date.now()}`;
-    lifecycleTagConfigs.push({
+    updatedConfig = {
       ...config,
       id: newId
-    });
+    };
+    lifecycleTagConfigs.push(updatedConfig);
+    console.log('Added new config with ID', newId, updatedConfig);
   }
+  
+  console.log('Final lifecycle configs to save:', lifecycleTagConfigs);
   
   // Save back to Firebase - only update the specific nested field
   await updateDoc(doc(db, 'Users', userUID), {
     'workflows.whatsapp_agent.lifecycleTagConfigs': lifecycleTagConfigs
   });
   
-  return config;
+  return updatedConfig;
 };
 
 /**
@@ -118,28 +130,87 @@ export const processMessageForLifecycle = async (
     const lifecycleConfigs = await getAllLifecycleTagConfigs();
     const activeConfigs = lifecycleConfigs.filter(config => config.active);
     
-    if (activeConfigs.length === 0) {
-      return false;
+    if (activeConfigs.length === 0) return false;
+    
+    // FIRST CHECK: Is this contact manually overridden?
+    // If the lifecycle has been manually set, we should not automatically change it
+    const chatDocRef = doc(db, `Whatsapp_Data/${userUID}/chats/${phoneNumber}`);
+    const chatDoc = await getDoc(chatDocRef);
+    
+    if (chatDoc.exists()) {
+      const contactData = chatDoc.data();
+      
+      // If the contact has a manually_set_lifecycle flag, skip automatic tagging
+      if (contactData.manually_set_lifecycle === true) {
+        return false;
+      }
     }
     
     // Normalize the message text for easier matching
     const normalizedMessage = message.toLowerCase();
     
+    // Standard lifecycle names for reference only (no conversion)
+    // Using these IDs directly in your tagging rules is recommended for consistency
+    const standardStageReferences = [
+      'new_lead',
+      'vip_lead',
+      'hot_lead',
+      'payment',
+      'customer',
+      'cold_lead',
+      'interested'
+    ];
+    
     // Check each config for keyword matches
     for (const config of activeConfigs) {
-      const keywordMatch = config.keywords.some(keyword => 
-        normalizedMessage.includes(keyword.toLowerCase())
-      );
+      const keywordMatch = config.keywords.some(keyword => {
+        return normalizedMessage.includes(keyword.toLowerCase());
+      });
       
       if (keywordMatch) {
-        // Update the contact's lifecycle
-        await updateDoc(
-          doc(db, `Whatsapp_Data/${userUID}/chats/${phoneNumber}`),
-          { lifecycle: config.name }
-        );
+        // Use the EXACT lifecycle value as defined in the config
+        // Get the exact lifecycle value from the config
+        const exactLifecycleValue = config.name;
         
-        console.log(`Updated lifecycle for ${phoneNumber} to "${config.name}" based on message content`);
-        return true;
+        try {
+          // First read the current value to avoid unnecessary updates
+          if (!chatDoc.exists()) {
+            return false;
+          }
+          
+          const currentLifecycle = chatDoc.data().lifecycle;
+          
+          if (currentLifecycle === exactLifecycleValue) {
+            return true;
+          }
+          
+          // Update with the exact value
+          await updateDoc(chatDocRef, { lifecycle: exactLifecycleValue });
+          
+          // Verify the update was successful
+          const verifyDoc = await getDoc(chatDocRef);
+          if (verifyDoc.exists()) {
+            const verifiedValue = verifyDoc.data().lifecycle;
+            
+            if (verifiedValue !== exactLifecycleValue) {
+              // Try again with stronger method
+              await updateDoc(chatDocRef, { lifecycle: exactLifecycleValue });
+            }
+          }
+          
+          // IMPORTANT: Log the exact value for tracking
+          // @ts-ignore
+          window.lastAutomaticLifecycleUpdate = {
+            phoneNumber,
+            value: exactLifecycleValue,
+            timestamp: new Date().toISOString()
+          };
+          
+          return true;
+        } catch (error) {
+          console.error(`Error updating lifecycle to "${exactLifecycleValue}":`, error);
+          return false;
+        }
       }
     }
     
@@ -213,17 +284,18 @@ export const startLifecycleTaggingIntegration = async (): Promise<() => void> =>
 };
 
 /**
- * Get the available lifecycle stages for the application
- * These are the predefined lifecycle stages that users can select from
+ * Get the suggested lifecycle stages for the application
+ * These are suggested values but users can define their own custom lifecycle stages
  */
 export const getAvailableLifecycleStages = (): string[] => {
+  // These are just suggestions - users can create custom lifecycle names
   return [
     "new_lead",
-    "interested",
+    "vip_lead", 
     "hot_lead",
     "payment",
-    "customer",
+    "customer", 
     "cold_lead",
-    "vip_lead"
+    "interested"
   ];
 }; 

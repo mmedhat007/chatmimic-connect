@@ -35,6 +35,10 @@ ChatMimic Connect is a WhatsApp AI agent management platform that allows busines
 - [x] Lead categorization (New Lead, VIP Lead, Hot Lead, etc.)
 - [x] Team assignment 
 - [x] Workflow status tracking
+- [x] Manual lifecycle override functionality
+  - Manual flag to prevent automatic updates
+  - Visual indicator for manually set stages
+  - Option to re-enable automatic tagging
 
 ### Google Sheets Integration
 - OAuth-based authentication with Google
@@ -153,8 +157,10 @@ How the AI generates responses:
 How leads are tracked and managed:
 1. Incoming messages create new contacts
 2. Contacts can be categorized into lifecycle stages (New Lead, Hot Lead, etc.)
-3. Contacts can be assigned to teams for handling
-4. Workflow status shows automation processes applied to contacts
+3. Manual lifecycle override prevents automatic updates when explicitly set by users
+4. Visual indicators show when a contact's lifecycle is in manual mode
+5. Contacts can be assigned to teams for handling
+6. Workflow status shows automation processes applied to contacts
 
 ---
 

@@ -66,19 +66,25 @@ const BroadcastMessage = () => {
     fetchTagsAndContacts();
     fetchTemplates();
 
-    // Check if user has paid
-    const userUID = getCurrentUser();
-    if (!userUID) return;
+    // Check if user has paid - one-time check instead of continuous subscription
+    const checkPaidStatus = async () => {
+      const userUID = getCurrentUser();
+      if (!userUID) return;
 
-    const userRef = doc(db, 'Users', userUID);
-    const unsubscribe = onSnapshot(userRef, (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
-        setIsPaid(!!data.workflows?.whatsapp_agent?.paid);
+      try {
+        const userRef = doc(db, 'Users', userUID);
+        const userDoc = await getDoc(userRef);
+        
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          setIsPaid(!!data.workflows?.whatsapp_agent?.paid);
+        }
+      } catch (error) {
+        console.error('Error checking paid status:', error);
       }
-    });
+    };
 
-    return () => unsubscribe();
+    checkPaidStatus();
   }, []);
 
   const fetchTemplates = async () => {
@@ -323,7 +329,9 @@ const BroadcastMessage = () => {
           lastMessage: '',
           lastMessageTime: new Date(),
           lastMessageSender: 'system',
-          status: 'open'
+          status: 'open',
+          agentStatus: 'on',
+          humanAgent: false
         });
       }
 

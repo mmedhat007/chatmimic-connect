@@ -64,6 +64,7 @@ Used for real-time messaging, user authentication, and WhatsApp integration.
       - `status`: String - Chat status (open, closed)
       - `tags`: Array - Tags for categorization
       - `lifecycle`: String - Lead status category ("new_lead", "vip_lead", "hot_lead", "payment", "customer", "cold_lead")
+      - `manually_set_lifecycle`: Boolean - Flag indicating if lifecycle was manually set by user (prevents automatic updates)
       - `assignedTeam`: String - Team assigned to the contact
       - `workflowStatus`: Object - Current workflow status information
         - `name`: String - Name of the current workflow

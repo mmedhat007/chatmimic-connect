@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import { Contact, Message } from '../types';
-import { ArrowLeft, Send, User, ChevronDown, CheckCircle, Flame, DollarSign, Inbox, ServerCrash } from 'lucide-react';
+import { ArrowLeft, Send, User, ChevronDown, CheckCircle, Flame, DollarSign, Inbox, ServerCrash, RotateCcw } from 'lucide-react';
 import { formatTimestamp } from '../services/firebase';
 import AgentControls from './AgentControls';
 import TagControls from './TagControls';
@@ -53,7 +53,7 @@ interface ChatAreaProps {
   onBack?: () => void;
   isMobile?: boolean;
   onViewLifecycle?: () => void;
-  onUpdateContactStatus?: (contactId: string, status: 'new_lead' | 'vip_lead' | 'hot_lead' | 'payment' | 'customer' | 'cold_lead') => void;
+  onUpdateContactStatus?: (contactId: string, status: string) => void;
 }
 
 const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpdateContactStatus }: ChatAreaProps) => {
@@ -66,6 +66,7 @@ const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpda
   const [isPaid, setIsPaid] = useState(false);
   const [showLifecycleDropdown, setShowLifecycleDropdown] = useState(false);
   const [customStageNames, setCustomStageNames] = useState<{[key: string]: string}>({});
+  const [currentLifecycle, setCurrentLifecycle] = useState<string | undefined>(undefined);
   
   // Combined lifecycle stages with custom names
   const lifecycleStages = defaultLifecycleStages.map(stage => ({
@@ -102,7 +103,7 @@ const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpda
     };
   }, []);
 
-  // Set up real-time listener for chat status
+  // Set up real-time listener for chat status and lifecycle
   useEffect(() => {
     if (!contact) return;
 
@@ -115,11 +116,21 @@ const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpda
       if (doc.exists()) {
         const data = doc.data();
         setChatStatus(data.status || 'open');
+        // Update the lifecycle value from database in real-time
+        setCurrentLifecycle(data.lifecycle);
+        console.log(`REAL-TIME UPDATE - Lifecycle changed to: ${data.lifecycle}`);
       }
     });
 
     return () => unsubscribe();
   }, [contact]);
+
+  // Update current lifecycle when contact changes
+  useEffect(() => {
+    if (contact) {
+      setCurrentLifecycle(contact.lifecycle);
+    }
+  }, [contact?.phoneNumber]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -148,20 +159,26 @@ const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpda
     return () => unsubscribe();
   }, [contact]);
 
-  // Check if user has paid
+  // Check if user has paid - one-time check instead of continuous subscription
   useEffect(() => {
-    const userUID = getCurrentUser();
-    if (!userUID) return;
+    const checkPaidStatus = async () => {
+      const userUID = getCurrentUser();
+      if (!userUID) return;
 
-    const userRef = doc(db, 'Users', userUID);
-    const unsubscribe = onSnapshot(userRef, (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
-        setIsPaid(!!data.workflows?.whatsapp_agent?.paid);
+      try {
+        const userRef = doc(db, 'Users', userUID);
+        const userDoc = await getDoc(userRef);
+        
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          setIsPaid(!!data.workflows?.whatsapp_agent?.paid);
+        }
+      } catch (error) {
+        console.error('Error checking paid status:', error);
       }
-    });
+    };
 
-    return () => unsubscribe();
+    checkPaidStatus();
   }, []);
 
   const handleSendMessage = async () => {
@@ -291,42 +308,194 @@ const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpda
   };
 
   // Helper function to update lifecycle stage
-  const updateLifecycleStage = async (stageId: 'new_lead' | 'vip_lead' | 'hot_lead' | 'payment' | 'customer' | 'cold_lead') => {
-    if (!contact) return;
+  const updateLifecycleStage = async (stageId: string) => {
+    if (!contact || !contact.phoneNumber) {
+      console.error('No contact selected');
+      return false;
+    }
     
     try {
-      // If parent component provided an update function, use it for better state synchronization
-      if (onUpdateContactStatus) {
-        onUpdateContactStatus(contact.phoneNumber, stageId);
-      } else {
-        // Fallback to direct update if no parent handler is provided
-        await updateContactField(contact.phoneNumber, 'lifecycle', stageId);
+      // Store the exact stage ID to ensure we don't lose it
+      const exactStageId = stageId;
+      
+      // Add global tracking for debugging
+      // @ts-ignore
+      window.lastLifecycleUpdate = {
+        contactId: contact.phoneNumber,
+        stageId: exactStageId,
+        timestamp: new Date().toISOString()
+      };
+      
+      // Get the current user ID
+      const userUID = getCurrentUser();
+      if (!userUID) {
+        throw new Error('User not authenticated');
       }
       
-      setShowLifecycleDropdown(false);
+      // Reference to the contact document
+      const contactRef = doc(db, 'Whatsapp_Data', userUID, 'chats', contact.phoneNumber);
+      
+      // Read the current value before making any updates
+      const beforeSnapshot = await getDoc(contactRef);
+      const currentValue = beforeSnapshot.exists() ? beforeSnapshot.data().lifecycle : undefined;
+      
+      // Only update if it's actually changed
+      if (currentValue !== exactStageId) {
+        // UPDATE WITH MANUAL FLAG: Add manually_set_lifecycle: true to indicate a user manually set this
+        await updateDoc(contactRef, {
+          lifecycle: exactStageId,
+          manually_set_lifecycle: true // Add flag to prevent automatic overwrites
+        });
+        
+        // Verify if the update was successful
+        const afterSnapshot = await getDoc(contactRef);
+        const newValue = afterSnapshot.exists() ? afterSnapshot.data().lifecycle : undefined;
+        
+        if (newValue !== exactStageId) {
+          console.warn(`Verification failed: expected "${exactStageId}" but got "${newValue || 'none'}"`);
+          alert(`Warning: Update failed verification. Expected "${exactStageId}" but found "${newValue || 'none'}" in the database.`);
+          return false;
+        }
+        
+        // Update the parent component too
+        if (onUpdateContactStatus) {
+          await onUpdateContactStatus(contact.phoneNumber, exactStageId);
+        }
+        
+        return true;
+      } else {
+        // Check if the manual flag is set and update if needed
+        const manuallySetFlag = beforeSnapshot.exists() ? beforeSnapshot.data().manually_set_lifecycle : undefined;
+        
+        if (manuallySetFlag !== true) {
+          // Just update the manual flag
+          await updateDoc(contactRef, {
+            manually_set_lifecycle: true
+          });
+        }
+        
+        return true;
+      }
     } catch (error) {
-      console.error('Error updating lifecycle stage:', error);
+      console.error('Error updating lifecycle:', error);
+      alert(`Failed to update lifecycle: ${error}`);
+      return false;
     }
   };
 
   // Function to get the current lifecycle stage display
   const getCurrentLifecycleStage = () => {
-    if (!contact || !contact.lifecycle) return 'Set Stage';
-    const stage = lifecycleStages.find(s => s.id === contact.lifecycle);
-    return stage ? stage.name : 'Set Stage';
+    // Use real-time lifecycle value first, then fall back to the contact prop
+    const lifecycle = currentLifecycle !== undefined ? currentLifecycle : contact?.lifecycle;
+    if (!lifecycle) return 'Set Stage';
+    
+    console.log(`DEBUG - Current lifecycle: "${lifecycle}"`);
+    
+    // Try different matching strategies in order of preference
+    // 1. Direct ID match
+    let stage = lifecycleStages.find(s => s.id === lifecycle);
+    if (stage) return stage.name;
+    
+    // 2. Case-insensitive ID match
+    stage = lifecycleStages.find(s => s.id.toLowerCase() === lifecycle.toLowerCase());
+    if (stage) return stage.name;
+    
+    // 3. Normalize underscores and try matching
+    const normalizedLifecycle = lifecycle.toLowerCase().replace(/_/g, ' ');
+    
+    stage = lifecycleStages.find(s => 
+      s.id.replace(/_/g, ' ').toLowerCase() === normalizedLifecycle ||
+      s.name.toLowerCase() === normalizedLifecycle
+    );
+    
+    if (stage) return stage.name;
+    
+    // 4. NEW: No separator match
+    const lifecycleNoSeparator = lifecycle.toLowerCase().replace(/[_\s]/g, '');
+    
+    stage = lifecycleStages.find(s => 
+      s.id.toLowerCase().replace(/[_\s]/g, '') === lifecycleNoSeparator ||
+      s.name.toLowerCase().replace(/[_\s]/g, '') === lifecycleNoSeparator
+    );
+    
+    if (stage) return stage.name;
+    
+    // 5. Format raw value for display
+    if (lifecycle.includes('_')) {
+      return lifecycle
+        .split('_')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+    }
+    
+    return lifecycle.charAt(0).toUpperCase() + lifecycle.slice(1);
   };
 
   // Function to get the current lifecycle stage color
   const getCurrentLifecycleColor = () => {
-    if (!contact || !contact.lifecycle) return 'bg-gray-100 text-gray-600';
-    const stage = lifecycleStages.find(s => s.id === contact.lifecycle);
+    const lifecycle = currentLifecycle !== undefined ? currentLifecycle : contact?.lifecycle;
+    if (!lifecycle) return 'bg-gray-100 text-gray-600';
+    
+    // 1. Direct ID match
+    let stage = lifecycleStages.find(s => s.id === lifecycle);
+    if (stage) return stage.color;
+    
+    // 2. Case-insensitive ID match  
+    stage = lifecycleStages.find(s => s.id.toLowerCase() === lifecycle.toLowerCase());
+    if (stage) return stage.color;
+    
+    // 3. Normalize and try more flexible matching
+    const normalizedLifecycle = lifecycle.toLowerCase().replace(/_/g, ' ');
+    
+    stage = lifecycleStages.find(s => 
+      s.id.replace(/_/g, ' ').toLowerCase() === normalizedLifecycle ||
+      s.name.toLowerCase() === normalizedLifecycle
+    );
+    
+    if (stage) return stage.color;
+    
+    // 4. NEW: No separator match
+    const lifecycleNoSeparator = lifecycle.toLowerCase().replace(/[_\s]/g, '');
+    
+    stage = lifecycleStages.find(s => 
+      s.id.toLowerCase().replace(/[_\s]/g, '') === lifecycleNoSeparator ||
+      s.name.toLowerCase().replace(/[_\s]/g, '') === lifecycleNoSeparator
+    );
+    
     return stage ? stage.color : 'bg-gray-100 text-gray-600';
   };
 
   // Function to get the current lifecycle stage icon
   const getCurrentLifecycleIcon = () => {
-    if (!contact || !contact.lifecycle) return <User className="w-4 h-4 text-gray-500" />;
-    const stage = lifecycleStages.find(s => s.id === contact.lifecycle);
+    const lifecycle = currentLifecycle !== undefined ? currentLifecycle : contact?.lifecycle;
+    if (!lifecycle) return <User className="w-4 h-4 text-gray-500" />;
+    
+    // 1. Direct ID match
+    let stage = lifecycleStages.find(s => s.id === lifecycle);
+    if (stage) return stage.icon;
+    
+    // 2. Case-insensitive ID match
+    stage = lifecycleStages.find(s => s.id.toLowerCase() === lifecycle.toLowerCase());
+    if (stage) return stage.icon;
+    
+    // 3. Normalize and try more flexible matching
+    const normalizedLifecycle = lifecycle.toLowerCase().replace(/_/g, ' ');
+    
+    stage = lifecycleStages.find(s => 
+      s.id.replace(/_/g, ' ').toLowerCase() === normalizedLifecycle ||
+      s.name.toLowerCase() === normalizedLifecycle
+    );
+    
+    if (stage) return stage.icon;
+    
+    // 4. NEW: No separator match
+    const lifecycleNoSeparator = lifecycle.toLowerCase().replace(/[_\s]/g, '');
+    
+    stage = lifecycleStages.find(s => 
+      s.id.toLowerCase().replace(/[_\s]/g, '') === lifecycleNoSeparator ||
+      s.name.toLowerCase().replace(/[_\s]/g, '') === lifecycleNoSeparator
+    );
+    
     return stage ? stage.icon : <User className="w-4 h-4 text-gray-500" />;
   };
 
@@ -369,29 +538,187 @@ const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpda
           </div>
           
           <div className="flex items-center gap-2">
-            {/* Lifecycle Stage Dropdown */}
+            {/* Lifecycle Status Dropdown */}
             <div className="relative" ref={dropdownRef}>
-              <button
+              <div 
                 onClick={() => setShowLifecycleDropdown(!showLifecycleDropdown)}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium ${getCurrentLifecycleColor()}`}
+                className="flex items-center space-x-1 px-2 py-1 border rounded-md bg-white text-gray-700 hover:bg-gray-50 cursor-pointer"
               >
-                <span className="flex items-center gap-1.5">
+                <div className="flex items-center">
                   {getCurrentLifecycleIcon()}
-                  {getCurrentLifecycleStage()}
-                </span>
-                <ChevronDown className="w-3.5 h-3.5 ml-1" />
-              </button>
+                  <span className="ml-1 text-sm font-medium">{lifecycleStages.find(s => s.id === currentLifecycle)?.name || 'Set Stage'}</span>
+                  {contact?.manually_set_lifecycle && (
+                    <span className="ml-1 text-xs px-1 py-0.5 rounded-full bg-blue-100 text-blue-800" title="Manual mode - automatic tagging disabled">M</span>
+                  )}
+                </div>
+                <ChevronDown className="h-4 w-4 text-gray-500" />
+              </div>
               
               {showLifecycleDropdown && (
-                <div className="absolute right-0 mt-1 bg-white border rounded-md shadow-lg z-10 w-48">
+                <div className="absolute top-full left-0 mt-1 w-48 bg-white border rounded-md shadow-lg z-10 py-1">
+                  <div className="px-3 py-2 border-b">
+                    <h3 className="text-xs font-medium text-gray-500">Set Contact Stage</h3>
+                    {contact?.manually_set_lifecycle && (
+                      <p className="text-xs text-blue-600 mt-1">Manual mode active</p>
+                    )}
+                  </div>
+                  
+                  {/* Add option to enable auto-tagging if in manual mode */}
+                  {contact?.manually_set_lifecycle && (
+                    <button
+                      className="flex items-center w-full px-3 py-2 text-sm text-left hover:bg-gray-50 bg-blue-50 text-blue-700"
+                      onClick={async (event) => {
+                        // Disable button to prevent double-clicks
+                        const btn = event.currentTarget as HTMLButtonElement;
+                        btn.disabled = true;
+                        
+                        try {
+                          // Close dropdown
+                          setShowLifecycleDropdown(false);
+                          
+                          // Get user ID
+                          const userUID = getCurrentUser();
+                          if (!userUID) {
+                            throw new Error('No user logged in');
+                          }
+                          
+                          // Reference to contact document
+                          const contactRef = doc(db, 'Whatsapp_Data', userUID, 'chats', contact.phoneNumber);
+                          
+                          // Update to remove manual override flag
+                          await updateDoc(contactRef, {
+                            manually_set_lifecycle: false
+                          });
+                          
+                          // Show success message
+                          alert('Automatic lifecycle tagging has been re-enabled for this contact.');
+                        } catch (error) {
+                          console.error('Error enabling auto-tagging:', error);
+                          alert(`Failed to enable automatic tagging: ${error}`);
+                        } finally {
+                          // Re-enable button
+                          setTimeout(() => {
+                            btn.disabled = false;
+                          }, 1000);
+                        }
+                      }}
+                    >
+                      <RotateCcw className="w-4 h-4 mr-2" />
+                      <span>Enable Auto-Tagging</span>
+                    </button>
+                  )}
+                  
                   <div className="py-1">
                     {lifecycleStages.map((stage) => (
                       <button
                         key={stage.id}
                         className={`flex items-center w-full px-3 py-2 text-sm text-left hover:bg-gray-50 ${
-                          contact.lifecycle === stage.id ? 'bg-gray-50' : ''
+                          (() => {
+                            // Use real-time lifecycle value first, then fall back to the contact prop
+                            const lifecycle = currentLifecycle !== undefined ? currentLifecycle : contact?.lifecycle;
+                            if (!lifecycle) return '';
+                            
+                            // 1. Direct ID match
+                            if (lifecycle === stage.id) {
+                              return 'bg-gray-50';
+                            }
+                            
+                            // 2. Case-insensitive ID match
+                            if (lifecycle.toLowerCase() === stage.id.toLowerCase()) {
+                              return 'bg-gray-50';
+                            }
+                            
+                            // 3. Normalize underscores and try matching
+                            const normalizedLifecycle = lifecycle.toLowerCase().replace(/_/g, ' ');
+                            const normalizedStageId = stage.id.replace(/_/g, ' ').toLowerCase();
+                            const normalizedStageName = stage.name.toLowerCase();
+                            
+                            if (normalizedLifecycle === normalizedStageId || 
+                                normalizedLifecycle === normalizedStageName) {
+                              return 'bg-gray-50';
+                            }
+                            
+                            // 4. NEW: No separator match
+                            const lifecycleNoSeparator = lifecycle.toLowerCase().replace(/[_\s]/g, '');
+                            const stageIdNoSeparator = stage.id.toLowerCase().replace(/[_\s]/g, '');
+                            const stageNameNoSeparator = stage.name.toLowerCase().replace(/[_\s]/g, '');
+                            
+                            if (lifecycleNoSeparator === stageIdNoSeparator || 
+                                lifecycleNoSeparator === stageNameNoSeparator) {
+                              return 'bg-gray-50';
+                            }
+                            
+                            return '';
+                          })()
                         }`}
-                        onClick={() => updateLifecycleStage(stage.id as 'new_lead' | 'vip_lead' | 'hot_lead' | 'payment' | 'customer' | 'cold_lead')}
+                        onClick={async (event) => {
+                          // First, disable the button to prevent double-clicks
+                          const btn = event.currentTarget as HTMLButtonElement;
+                          btn.disabled = true;
+                          
+                          try {
+                            // Log the exact stage ID we're trying to set
+                            console.log(`DROPDOWN CLICK - Selected stage: "${stage.id}" (${stage.name})`);
+                            console.log(`DROPDOWN CLICK - Current state before update:
+                              currentLifecycle: "${currentLifecycle || 'none'}"
+                              contact?.lifecycle: "${contact?.lifecycle || 'none'}"
+                            `);
+                            
+                            // Store the exact ID we want to set
+                            const exactStageId = stage.id;
+                            
+                            // Pre-emptively update the local state for immediate feedback
+                            setCurrentLifecycle(exactStageId);
+                            
+                            // Close the dropdown right away
+                            setShowLifecycleDropdown(false);
+                            
+                            // Add a global tracking variable to debug
+                            // @ts-ignore
+                            window.lastClickedLifecycle = {
+                              id: exactStageId,
+                              name: stage.name,
+                              timestamp: new Date().toISOString()
+                            };
+                            
+                            // Perform the actual update with the exact ID
+                            console.log(`DROPDOWN CLICK - Calling updateLifecycleStage with EXACT stage.id="${exactStageId}"`);
+                            await updateLifecycleStage(exactStageId);
+                            
+                            // Force a UI refresh to ensure everything is in sync
+                            // This won't actually change the value but will trigger a re-render
+                            setCurrentLifecycle(prev => {
+                              console.log(`DROPDOWN CLICK - Forcing state refresh: "${prev}" -> "${exactStageId}"`);
+                              return exactStageId; 
+                            });
+                            
+                            // Extra step: If we have a direct parent handler, call it again
+                            // to ensure state is updated even if the main function had issues
+                            if (onUpdateContactStatus) {
+                              console.log(`DROPDOWN CLICK - Calling onUpdateContactStatus directly as backup`);
+                              try {
+                                await onUpdateContactStatus(contact.phoneNumber, exactStageId);
+                              } catch (backupError) {
+                                console.error(`DROPDOWN CLICK - Backup state update failed:`, backupError);
+                              }
+                            }
+                            
+                            console.log(`DROPDOWN CLICK - Update process completed for stage "${exactStageId}"`);
+                            
+                            // Display a success message
+                            alert(`Successfully updated lifecycle to "${stage.name}" (${exactStageId})`);
+                          } catch (clickError) {
+                            console.error(`DROPDOWN CLICK - Error during update:`, clickError);
+                            // If we fail, revert the local state
+                            setCurrentLifecycle(contact?.lifecycle);
+                            alert(`Failed to update lifecycle: ${clickError}`);
+                          } finally {
+                            // Re-enable the button
+                            setTimeout(() => {
+                              btn.disabled = false;
+                            }, 1000);
+                          }
+                        }}
                       >
                         <div className={`flex items-center justify-center w-5 h-5 rounded-md mr-2 ${stage.color.split(' ')[0]}`}>
                           {stage.icon}

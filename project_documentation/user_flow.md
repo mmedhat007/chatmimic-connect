@@ -220,6 +220,20 @@ This approach balances security, performance, and user experience.
    - The system checks the message text against all active lifecycle tagging rules
    - If a keyword match is found, the contact's lifecycle stage is automatically updated
    - The system prioritizes rules in the order they were created if multiple matches occur
+   - If a contact has the `manually_set_lifecycle` flag set to true, automatic tagging is skipped
+
+### Manual Override
+1. Users can manually set a contact's lifecycle stage via:
+   - The lifecycle dropdown in the chat header
+   - The lifecycle sidebar
+2. When a user manually sets a stage:
+   - The contact is marked with `manually_set_lifecycle=true`
+   - A visual "M" indicator appears next to the lifecycle dropdown
+   - Automatic tagging rules no longer affect this contact
+3. To re-enable automatic tagging:
+   - User selects "Enable Auto-Tagging" from the lifecycle dropdown
+   - The `manually_set_lifecycle` flag is removed
+   - Automatic tagging resumes for this contact
 
 ### Management
 1. User can edit existing tagging rules
