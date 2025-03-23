@@ -138,7 +138,7 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         lastMessageTime: currentTime,
         lastTimestamp: currentTime.getTime(),
         status: 'closed',
-        agentStatus: 'off',
+        agentStatus: 'on',
         humanAgent: false,
         tags: ['system']
       });

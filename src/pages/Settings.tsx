@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import GoogleSheetsButton from '../components/GoogleSheetsButton';
 import { getCurrentUser } from '../services/firebase';
-import { doc, setDoc, collection, addDoc, getDocs, getDoc, updateDoc, query, orderBy, deleteDoc, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, getDocs, getDoc, updateDoc, query, orderBy, deleteDoc, writeBatch, collectionGroup } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import NavSidebar from '../components/NavSidebar';
 import JSZip from 'jszip';
@@ -429,31 +429,89 @@ const Settings = () => {
       }
 
       // 2. Delete all chats and their messages from Whatsapp_Data
+      console.log("Deleting all WhatsApp chats and messages...");
       const chatsRef = collection(db, 'Whatsapp_Data', userUID, 'chats');
       const chatsSnapshot = await getDocs(chatsRef);
       
       // Delete each chat and its messages
       for (const chatDoc of chatsSnapshot.docs) {
+        const chatPhoneNumber = chatDoc.id;
+        console.log(`Deleting chat for phone number: ${chatPhoneNumber}`);
+        
         // Delete all messages in the chat
-        const messagesRef = collection(chatDoc.ref, 'messages');
+        const messagesRef = collection(db, 'Whatsapp_Data', userUID, 'chats', chatPhoneNumber, 'messages');
         const messagesSnapshot = await getDocs(messagesRef);
+        console.log(`Found ${messagesSnapshot.docs.length} messages to delete in chat ${chatPhoneNumber}`);
+        
         const messageDeletePromises = messagesSnapshot.docs.map(messageDoc => deleteDoc(messageDoc.ref));
         await Promise.all(messageDeletePromises);
         
-        // Delete the chat document
+        // Delete the chat document itself
         await deleteDoc(chatDoc.ref);
+        console.log(`Deleted chat document for ${chatPhoneNumber}`);
       }
 
       // 3. Delete templates
+      console.log("Deleting WhatsApp templates...");
       const templatesRef = collection(db, 'Whatsapp_Data', userUID, 'templates');
       const templatesSnapshot = await getDocs(templatesRef);
+      console.log(`Found ${templatesSnapshot.docs.length} templates to delete`);
+      
       const templateDeletePromises = templatesSnapshot.docs.map(templateDoc => deleteDoc(templateDoc.ref));
       await Promise.all(templateDeletePromises);
 
-      // 4. Delete the root Whatsapp_Data document for the user
+      // 4. Look for any other collections that might exist
+      console.log("Checking for other WhatsApp data collections...");
+      
+      // Common subcollections in WhatsApp data
+      const possibleCollections = [
+        'settings',
+        'analytics',
+        'contacts',
+        'broadcasts',
+        'automations',
+        'media',
+        'status',
+        'logs',
+        'webhooks'
+      ];
+      
+      // Try to delete documents from each possible collection
+      for (const collName of possibleCollections) {
+        try {
+          const otherCollRef = collection(db, 'Whatsapp_Data', userUID, collName);
+          const snapshot = await getDocs(otherCollRef);
+          
+          if (snapshot.docs.length > 0) {
+            console.log(`Found ${snapshot.docs.length} documents in ${collName} collection`);
+            const deletePromises = snapshot.docs.map(doc => deleteDoc(doc.ref));
+            await Promise.all(deletePromises);
+            console.log(`Deleted all documents from ${collName} collection`);
+          }
+        } catch (err) {
+          // Collection might not exist, continue
+          console.log(`No ${collName} collection found or error accessing it`);
+        }
+      }
+
+      // 5. Delete the root Whatsapp_Data document for the user
+      console.log("Deleting root WhatsApp data document...");
       const whatsappDataRef = doc(db, 'Whatsapp_Data', userUID);
       await deleteDoc(whatsappDataRef);
 
+      // 6. Verify deletion by checking if any chats still exist
+      const verifyChatsExist = await getDocs(chatsRef);
+      if (verifyChatsExist.docs.length > 0) {
+        console.warn(`Found ${verifyChatsExist.docs.length} chat documents still existing after deletion attempt`);
+        // Attempt a second deletion of any remaining chat documents
+        const remainingDeletePromises = verifyChatsExist.docs.map(doc => deleteDoc(doc.ref));
+        await Promise.all(remainingDeletePromises);
+        console.log("Second deletion attempt completed");
+      } else {
+        console.log("Verified all chat documents were successfully deleted");
+      }
+
+      console.log("WhatsApp data deletion process completed successfully");
       toast({
         title: "Success",
         description: "Your WhatsApp data has been successfully deleted.",

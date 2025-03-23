@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Contact } from '../types';
 import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, X, Flame, DollarSign, User, Phone, Inbox, ServerCrash, Layers, Edit2, Check, RotateCcw } from 'lucide-react';
-import { getCurrentUser, getStageNames, updateStageName, resetStageName } from '../services/firebase';
+import { getCurrentUser, getStageNames, updateStageName, resetStageName, updateContactField } from '../services/firebase';
 import { db } from '../services/firebase';
-import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
 
 interface LifecycleSidebarProps {
   contact: Contact | null;
@@ -136,13 +136,70 @@ const LifecycleSidebar: React.FC<LifecycleSidebarProps> = ({
         lifecycleCountMap[stage.id] = 0;
       });
       
-      // Count contacts by lifecycle
+      // Count contacts by lifecycle with more flexible matching
       querySnapshot.forEach(doc => {
         const data = doc.data();
         total++;
         
-        if (data.lifecycle && lifecycleCountMap[data.lifecycle] !== undefined) {
+        if (!data.lifecycle) {
+          // Skip contacts without lifecycle
+          return;
+        }
+        
+        // Try to find matching stage with flexible matching
+        let matched = false;
+        
+        // Check exact match first
+        if (lifecycleCountMap[data.lifecycle] !== undefined) {
           lifecycleCountMap[data.lifecycle]++;
+          matched = true;
+        } else {
+          // Try to match with any stage ID using different formats
+          for (const stage of defaultLifecycleStages) {
+            // 1. Direct ID match was already checked above
+            
+            // 2. Case-insensitive match
+            if (data.lifecycle.toLowerCase() === stage.id.toLowerCase()) {
+              lifecycleCountMap[stage.id]++;
+              matched = true;
+              break;
+            }
+            
+            // 3. Normalize underscores and spaces
+            const normalizedContactLC = data.lifecycle.toLowerCase().replace(/_/g, ' ');
+            const normalizedStageId = stage.id.toLowerCase().replace(/_/g, ' ');
+            
+            if (normalizedContactLC === normalizedStageId) {
+              lifecycleCountMap[stage.id]++;
+              matched = true;
+              break;
+            }
+            
+            // 4. Compare with stage name (considering custom names too)
+            const stageName = customStageNames[stage.id] || stage.name;
+            if (normalizedContactLC === stageName.toLowerCase()) {
+              lifecycleCountMap[stage.id]++;
+              matched = true;
+              break;
+            }
+            
+            // 5. No separator match (remove all spaces and underscores)
+            const contactNoSeparator = data.lifecycle.toLowerCase().replace(/[_\s]/g, '');
+            const stageIdNoSeparator = stage.id.toLowerCase().replace(/[_\s]/g, '');
+            const stageNameNoSeparator = stageName.toLowerCase().replace(/[_\s]/g, '');
+            
+            if (contactNoSeparator === stageIdNoSeparator) {
+              lifecycleCountMap[stage.id]++;
+              matched = true;
+              break;
+            }
+            
+            if (contactNoSeparator === stageNameNoSeparator) {
+              lifecycleCountMap[stage.id]++;
+              matched = true;
+              break;
+            }
+          }
         }
       });
       
@@ -156,7 +213,7 @@ const LifecycleSidebar: React.FC<LifecycleSidebarProps> = ({
     
     // Clean up listener when component unmounts
     return () => unsubscribe();
-  }, []);
+  }, [customStageNames]);
 
   // Sample team inbox data
   const teamInboxes = [
@@ -167,9 +224,165 @@ const LifecycleSidebar: React.FC<LifecycleSidebarProps> = ({
   ];
 
   // Handle contact status update
-  const handleStatusChange = (stageId: string) => {
-    if (contact) {
-      onUpdateContactStatus(contact.phoneNumber, stageId);
+  const handleStatusChange = async (stageId: string) => {
+    if (!contact) return;
+    
+    try {
+      // Store the exact stage ID to ensure we don't lose it
+      const exactStageId = stageId;
+      
+      // Add global tracking for debugging
+      // @ts-ignore
+      window.lastLifecycleSidebarUpdate = {
+        contactId: contact.phoneNumber,
+        stageId: exactStageId,
+        timestamp: new Date().toISOString()
+      };
+      
+      // Get the current user ID
+      const userUID = getCurrentUser();
+      if (!userUID) {
+        throw new Error('User not authenticated');
+      }
+      
+      // Reference to the contact document
+      const contactRef = doc(db, 'Whatsapp_Data', userUID, 'chats', contact.phoneNumber);
+      
+      // First try direct database update to ensure the value is written
+      try {
+        // Read the current value first for comparison
+        const beforeSnap = await getDoc(contactRef);
+        const beforeValue = beforeSnap.exists() ? beforeSnap.data().lifecycle : undefined;
+        
+        // Only update if it's actually changed
+        if (beforeValue !== exactStageId) {
+          // Attempt update with retry
+          let updateSuccess = false;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              if (attempt === 1) {
+                // First attempt: regular updateDoc with manually_set_lifecycle flag
+                await updateDoc(contactRef, {
+                  lifecycle: exactStageId,
+                  manually_set_lifecycle: true // Set flag to prevent automatic updates
+                });
+              } else if (attempt === 2) {
+                // Second attempt: try updateContactField
+                await updateContactField(contact.phoneNumber, 'lifecycle', exactStageId);
+                // Add manually_set_lifecycle flag separately
+                await updateDoc(contactRef, {
+                  manually_set_lifecycle: true
+                });
+              } else {
+                // Third attempt: try setDoc with merge
+                const { setDoc } = await import('firebase/firestore');
+                await setDoc(contactRef, { 
+                  lifecycle: exactStageId,
+                  manually_set_lifecycle: true
+                }, { merge: true });
+              }
+              
+              // Verify the update
+              const verifySnap = await getDoc(contactRef);
+              const afterValue = verifySnap.exists() ? verifySnap.data().lifecycle : undefined;
+              
+              if (afterValue === exactStageId) {
+                updateSuccess = true;
+                break;
+              } else {
+                if (attempt < 3) {
+                  // Wait a moment before retrying
+                  await new Promise(resolve => setTimeout(resolve, 300));
+                }
+              }
+            } catch (attemptError) {
+              console.error(`Error updating lifecycle (attempt ${attempt}):`, attemptError);
+              
+              if (attempt < 3) {
+                // Wait a moment before retrying
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
+            }
+          }
+          
+          if (!updateSuccess) {
+            console.error(`Failed to update after multiple attempts`);
+            alert(`Warning: Could not update the database with "${exactStageId}". Please try again.`);
+          }
+          
+          // Manually update the lifecycle count for immediate UI feedback
+          updateLifecycleCountsLocally(beforeValue, exactStageId);
+        } else {
+          // Check if manual flag is set, and set it if it's not
+          const manualFlag = beforeSnap.exists() ? beforeSnap.data().manually_set_lifecycle : undefined;
+          if (manualFlag !== true) {
+            await updateDoc(contactRef, {
+              manually_set_lifecycle: true
+            });
+          }
+        }
+      } catch (dbError) {
+        console.error(`Database update failed:`, dbError);
+        throw dbError;
+      }
+      
+      // Call the parent component's update function to synchronize state
+      await onUpdateContactStatus(contact.phoneNumber, exactStageId);
+      
+      // Final verification after parent handler
+      setTimeout(async () => {
+        try {
+          const finalCheck = await getDoc(contactRef);
+          if (finalCheck.exists()) {
+            const finalValue = finalCheck.data().lifecycle;
+            
+            if (finalValue !== exactStageId) {
+              // One last attempt
+              await updateDoc(contactRef, { 
+                lifecycle: exactStageId,
+                manually_set_lifecycle: true 
+              });
+            }
+          }
+        } catch (error) {
+          console.error(`Error in final verification:`, error);
+        }
+      }, 1000);
+      
+    } catch (error) {
+      console.error('Error updating contact status:', error);
+      alert(`Failed to update contact status: ${error}`);
+    }
+  };
+
+  // Helper to update lifecycle counts locally for immediate UI feedback
+  const updateLifecycleCountsLocally = (oldStageId: string | undefined, newStageId: string) => {
+    if (oldStageId) {
+      // Find the old stage ID that matches the current lifecycle
+      const oldMatchingStage = defaultLifecycleStages.find(stage => 
+        contactMatchesStage({ phoneNumber: '', lifecycle: oldStageId } as Contact, stage.id)
+      )?.id;
+      
+      // Decrement old lifecycle count if we found a match
+      if (oldMatchingStage && lifecycleCounts[oldMatchingStage] > 0) {
+        setLifecycleCounts(prev => ({
+          ...prev,
+          [oldMatchingStage]: Math.max(0, (prev[oldMatchingStage] || 0) - 1)
+        }));
+      }
+    }
+    
+    // Find the new stage ID
+    const newMatchingStage = defaultLifecycleStages.find(stage =>
+      contactMatchesStage({ phoneNumber: '', lifecycle: newStageId } as Contact, stage.id)
+    )?.id;
+    
+    // Increment new lifecycle count
+    if (newMatchingStage) {
+      setLifecycleCounts(prev => ({
+        ...prev,
+        [newMatchingStage]: (prev[newMatchingStage] || 0) + 1
+      }));
     }
   };
 
@@ -233,6 +446,36 @@ const LifecycleSidebar: React.FC<LifecycleSidebarProps> = ({
     } catch (error) {
       console.error('Error resetting stage name:', error);
     }
+  };
+
+  // Helper function to check if a contact's lifecycle matches a stage
+  const contactMatchesStage = (contact: Contact | null, stageId: string): boolean => {
+    if (!contact || !contact.lifecycle) return false;
+    
+    const contactLifecycle = contact.lifecycle;
+    
+    // 1. Direct match
+    if (contactLifecycle === stageId) return true;
+    
+    // 2. Case-insensitive match
+    if (contactLifecycle.toLowerCase() === stageId.toLowerCase()) return true;
+    
+    // 3. Normalized match (replace underscores with spaces)
+    const normalizedContact = contactLifecycle.toLowerCase().replace(/_/g, ' ');
+    const normalizedStage = stageId.toLowerCase().replace(/_/g, ' ');
+    if (normalizedContact === normalizedStage) return true;
+    
+    // 4. Underscores match (replace spaces with underscores)
+    const contactWithUnderscores = contactLifecycle.toLowerCase().replace(/\s+/g, '_');
+    const stageWithUnderscores = stageId.toLowerCase().replace(/\s+/g, '_');
+    if (contactWithUnderscores === stageWithUnderscores) return true;
+    
+    // 5. No separator match
+    const contactNoSeparator = contactLifecycle.toLowerCase().replace(/[_\s]/g, '');
+    const stageNoSeparator = stageId.toLowerCase().replace(/[_\s]/g, '');
+    if (contactNoSeparator === stageNoSeparator) return true;
+    
+    return false;
   };
 
   // Determine mode: 'filter' or 'update'
@@ -343,7 +586,7 @@ const LifecycleSidebar: React.FC<LifecycleSidebarProps> = ({
                 key={stage.id}
                 className={`flex items-center justify-between p-2 rounded-md cursor-pointer text-sm my-1 group
                   ${activeFilter === stage.id ? 'bg-gray-200' : 'hover:bg-gray-50'}
-                  ${contact?.lifecycle === stage.id ? 'border-l-4 border-blue-500 pl-1' : ''}`}
+                  ${contactMatchesStage(contact, stage.id) ? 'border-l-4 border-blue-500 pl-1' : ''}`}
                 onClick={() => {
                   if (editingStageId === stage.id) {
                     return; // Don't do anything if we're editing

@@ -7,7 +7,8 @@ export interface Contact {
   agentStatus?: 'on' | 'off';
   humanAgent?: boolean;
   status?: 'open' | 'closed';
-  lifecycle?: 'new_lead' | 'vip_lead' | 'hot_lead' | 'payment' | 'customer' | 'cold_lead';
+  lifecycle?: string;
+  manually_set_lifecycle?: boolean;
   assignedTeam?: string;
   workflowStatus?: {
     name: string;
@@ -29,4 +30,15 @@ export interface AnalyticsData {
   totalContacts: number;
   messagesByHour: { hour: number; count: number }[];
   messagesByDay: { [key: string]: number };
+  messagesByTag?: { [tag: string]: number };
+  messagesByLifecycle?: { [lifecycle: string]: number };
+  contactsByLifecycle?: { [lifecycle: string]: number };
+  selectedTags?: string[];
+  selectedLifecycles?: string[];
+}
+
+export interface AnalyticsOptions {
+  dateRange?: 'today' | 'week' | 'month' | 'all';
+  tags?: string[];
+  lifecycles?: string[];
 } 

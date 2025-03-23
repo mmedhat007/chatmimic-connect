@@ -10,6 +10,82 @@ interface SidebarProps {
   lifecycleFilter?: string | null;
 }
 
+// Helper function to get lifecycle color class based on lifecycle value
+const getLifecycleColorClass = (lifecycle?: string) => {
+  if (!lifecycle) return '';
+  
+  // First try direct match
+  switch (lifecycle.toLowerCase()) {
+    case 'new_lead': return 'bg-blue-100 text-blue-800';
+    case 'vip_lead': return 'bg-indigo-100 text-indigo-800';
+    case 'hot_lead': return 'bg-orange-100 text-orange-800';
+    case 'payment': return 'bg-yellow-100 text-yellow-800';
+    case 'customer': return 'bg-green-100 text-green-800';
+    case 'cold_lead': return 'bg-red-100 text-red-800';
+  }
+  
+  // Then try normalized match (for values with spaces instead of underscores)
+  const normalized = lifecycle.toLowerCase().replace(/\s+/g, '_');
+  switch (normalized) {
+    case 'new_lead': return 'bg-blue-100 text-blue-800';
+    case 'vip_lead': return 'bg-indigo-100 text-indigo-800';
+    case 'hot_lead': return 'bg-orange-100 text-orange-800';
+    case 'payment': return 'bg-yellow-100 text-yellow-800';
+    case 'customer': return 'bg-green-100 text-green-800';
+    case 'cold_lead': return 'bg-red-100 text-red-800';
+  }
+  
+  // Finally try matching without separators
+  const noSeparator = lifecycle.toLowerCase().replace(/[_\s]/g, '');
+  switch (noSeparator) {
+    case 'newlead': return 'bg-blue-100 text-blue-800';
+    case 'viplead': return 'bg-indigo-100 text-indigo-800';
+    case 'hotlead': return 'bg-orange-100 text-orange-800';
+    case 'payment': return 'bg-yellow-100 text-yellow-800';
+    case 'customer': return 'bg-green-100 text-green-800';
+    case 'coldlead': return 'bg-red-100 text-red-800';
+    default: return 'bg-gray-100 text-gray-800';
+  }
+};
+
+// Helper function to get lifecycle display name based on lifecycle value
+const getLifecycleDisplayName = (lifecycle?: string) => {
+  if (!lifecycle) return '';
+  
+  // First try direct match
+  switch (lifecycle.toLowerCase()) {
+    case 'new_lead': return 'New';
+    case 'vip_lead': return 'VIP';
+    case 'hot_lead': return 'Hot';
+    case 'payment': return 'Payment';
+    case 'customer': return 'Customer';
+    case 'cold_lead': return 'Cold';
+  }
+  
+  // Then try normalized match
+  const normalized = lifecycle.toLowerCase().replace(/\s+/g, '_');
+  switch (normalized) {
+    case 'new_lead': return 'New';
+    case 'vip_lead': return 'VIP';
+    case 'hot_lead': return 'Hot';
+    case 'payment': return 'Payment';
+    case 'customer': return 'Customer';
+    case 'cold_lead': return 'Cold';
+  }
+  
+  // Finally try matching without separators
+  const noSeparator = lifecycle.toLowerCase().replace(/[_\s]/g, '');
+  switch (noSeparator) {
+    case 'newlead': return 'New';
+    case 'viplead': return 'VIP';
+    case 'hotlead': return 'Hot';
+    case 'payment': return 'Payment';
+    case 'customer': return 'Customer';
+    case 'coldlead': return 'Cold';
+    default: return lifecycle.charAt(0).toUpperCase() + lifecycle.slice(1);
+  }
+};
+
 const Sidebar = ({ contacts, activeContact, onSelectContact, lifecycleFilter }: SidebarProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'open' | 'closed'>('all');
@@ -137,20 +213,8 @@ const Sidebar = ({ contacts, activeContact, onSelectContact, lifecycleFilter }: 
                   <div className="flex items-center gap-2">
                     {/* Lifecycle Badge */}
                     {contact.lifecycle && (
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        contact.lifecycle === 'new_lead' ? 'bg-blue-100 text-blue-800' :
-                        contact.lifecycle === 'vip_lead' ? 'bg-indigo-100 text-indigo-800' :
-                        contact.lifecycle === 'hot_lead' ? 'bg-orange-100 text-orange-800' :
-                        contact.lifecycle === 'payment' ? 'bg-yellow-100 text-yellow-800' :
-                        contact.lifecycle === 'customer' ? 'bg-green-100 text-green-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {contact.lifecycle === 'new_lead' ? 'New' :
-                         contact.lifecycle === 'vip_lead' ? 'VIP' :
-                         contact.lifecycle === 'hot_lead' ? 'Hot' :
-                         contact.lifecycle === 'payment' ? 'Payment' :
-                         contact.lifecycle === 'customer' ? 'Customer' :
-                         'Cold'}
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getLifecycleColorClass(contact.lifecycle)}`}>
+                        {getLifecycleDisplayName(contact.lifecycle)}
                       </span>
                     )}
                     

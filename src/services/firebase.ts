@@ -26,7 +26,7 @@ import {
   sendPasswordResetEmail as firebaseSendPasswordResetEmail,
   User
 } from 'firebase/auth';
-import { Contact, Message, AnalyticsData } from '../types';
+import { Contact, Message, AnalyticsData, AnalyticsOptions } from '../types';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -123,6 +123,7 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
 
         console.log(`Contact ${doc.id} - Raw lastMessageTime:`, data.lastMessageTime);
         console.log(`Contact ${doc.id} - Processed lastMessageTime:`, lastMessageTime, new Date(lastMessageTime).toISOString());
+        console.log(`Contact ${doc.id} - Lifecycle:`, data.lifecycle || 'none');
         
         contacts.push({
           phoneNumber: doc.id,
@@ -130,9 +131,10 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
           lastMessage: data.lastMessage || '',
           lastMessageTime,
           tags: data.tags || [],
-          agentStatus: data.agentStatus || 'off',
+          agentStatus: data.agentStatus || 'on',
           humanAgent: data.humanAgent || false,
-          status: data.status || 'open'
+          status: data.status || 'open',
+          lifecycle: data.lifecycle || undefined // Ensure lifecycle is included
         });
       });
       
@@ -336,7 +338,12 @@ export const getContact = async (phoneNumber: string): Promise<Contact | null> =
         phoneNumber: contactSnap.id,
         contactName: data.contactName,
         lastMessage: data.lastMessage || '',
-        lastMessageTime
+        lastMessageTime,
+        tags: data.tags || [],
+        agentStatus: data.agentStatus || 'on',
+        humanAgent: data.humanAgent || false,
+        status: data.status || 'open',
+        lifecycle: data.lifecycle || undefined
       };
     } else {
       console.log("No such contact!");
@@ -359,7 +366,7 @@ interface MessageDoc {
 }
 
 // Get analytics data
-export const getAnalyticsData = async (dateRange?: 'today' | 'week' | 'month' | 'all'): Promise<AnalyticsData> => {
+export const getAnalyticsData = async (options?: AnalyticsOptions): Promise<AnalyticsData> => {
   const userUID = getCurrentUser();
   if (!userUID) {
     console.error('No user logged in');
@@ -370,145 +377,211 @@ export const getAnalyticsData = async (dateRange?: 'today' | 'week' | 'month' | 
       messagesByDay: {
         'Sunday': 0, 'Monday': 0, 'Tuesday': 0, 'Wednesday': 0,
         'Thursday': 0, 'Friday': 0, 'Saturday': 0
-      }
+      },
+      messagesByTag: {},
+      messagesByLifecycle: {},
+      contactsByLifecycle: {}
     };
   }
 
+  const dateRange = options?.dateRange;
+  const selectedTags = options?.tags || [];
+  const selectedLifecycles = options?.lifecycles || [];
+
   try {
+    console.log('Analytics: Starting analytics data retrieval for user', userUID);
+    if (selectedTags.length > 0) {
+      console.log('Analytics: Filtering by tags:', selectedTags);
+    }
+    if (selectedLifecycles.length > 0) {
+      console.log('Analytics: Filtering by lifecycles:', selectedLifecycles);
+    }
+    
     // Initialize analytics data
     const messagesByHour: { [hour: number]: number } = {};
     const messagesByDay: { [day: string]: number } = {
       'Sunday': 0, 'Monday': 0, 'Tuesday': 0, 'Wednesday': 0,
       'Thursday': 0, 'Friday': 0, 'Saturday': 0
     };
+    const messagesByTag: { [tag: string]: number } = {};
+    const messagesByLifecycle: { [lifecycle: string]: number } = {};
+    const contactsByLifecycle: { [lifecycle: string]: number } = {};
+    
     for (let i = 0; i < 24; i++) messagesByHour[i] = 0;
 
     let totalMessages = 0;
-    let lastDoc = null;
-    const BATCH_SIZE = 500;
-    const activeContacts = new Map<string, number>(); // phoneNumber -> first message timestamp
-
-    // Fetch and process messages in batches
-    while (true) {
-      let messagesQuery;
-      if (lastDoc) {
-        messagesQuery = query(
-          collectionGroup(db, 'messages'),
-          orderBy('timestamp', 'desc'),
-          startAfter(lastDoc),
-          limit(BATCH_SIZE)
-        );
-      } else {
-        messagesQuery = query(
-          collectionGroup(db, 'messages'),
-          orderBy('timestamp', 'desc'),
-          limit(BATCH_SIZE)
-        );
-      }
-
-      const messagesSnapshot = await getDocs(messagesQuery);
+    const activeContacts = new Set<string>(); // Using a Set to avoid duplicates
+    
+    // First get all chats to count contacts
+    console.log('Analytics: Fetching all contacts');
+    const chatsRef = collection(db, 'Whatsapp_Data', userUID, 'chats');
+    const chatsSnapshot = await getDocs(chatsRef);
+    
+    // Count chats and collect phone numbers
+    const now = new Date();
+    const phoneNumbers: string[] = [];
+    
+    chatsSnapshot.forEach(chatDoc => {
+      const chatData = chatDoc.data();
+      const phoneNumber = chatDoc.id;
+      const lifecycle = chatData.lifecycle || 'none';
       
-      if (messagesSnapshot.empty) break;
-
-      lastDoc = messagesSnapshot.docs[messagesSnapshot.docs.length - 1];
-
-      // Process this batch of messages
-      const messages = messagesSnapshot.docs
-        .filter(doc => {
-          const path = doc.ref.path.split('/');
-          return path[0] === 'Whatsapp_Data' && path[1] === userUID;
-        })
-        .map(doc => {
-          const data = doc.data() as MessageDoc;
-          const path = doc.ref.path.split('/');
-          const phoneNumber = path[3]; // Get phone number from path
-          let timestamp = Date.now();
+      // Filter by tags if any are selected
+      if (selectedTags.length > 0) {
+        const contactTags = chatData.tags || [];
+        // Skip contacts that don't have any of the selected tags
+        if (!selectedTags.some(tag => contactTags.includes(tag))) {
+          return; // Skip this contact
+        }
+      }
+      
+      // Filter by lifecycle if any are selected
+      if (selectedLifecycles.length > 0) {
+        // Skip contacts that don't have the selected lifecycle
+        if (!selectedLifecycles.includes(lifecycle)) {
+          return; // Skip this contact
+        }
+      }
+      
+      // Apply date filter if needed
+      if (dateRange && dateRange !== 'all') {
+        const lastMessageTime = chatData.lastMessageTime?.toDate ? 
+          chatData.lastMessageTime.toDate() : 
+          chatData.lastMessageTime ? new Date(chatData.lastMessageTime) : null;
           
-          if (data.timestamp?.seconds) {
-            timestamp = data.timestamp.seconds * 1000;
+        if (lastMessageTime) {
+          const daysDiff = Math.floor((now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60 * 24));
+          
+          if ((dateRange === 'today' && lastMessageTime.toDateString() !== now.toDateString()) ||
+              (dateRange === 'week' && daysDiff > 7) ||
+              (dateRange === 'month' && daysDiff > 30)) {
+            return; // Skip this contact
           }
-
-          // Track the earliest message timestamp for each contact
-          if (!activeContacts.has(phoneNumber) || timestamp < activeContacts.get(phoneNumber)!) {
-            activeContacts.set(phoneNumber, timestamp);
-          }
-
-          return {
-            id: doc.id,
-            message: data.message || '',
-            timestamp,
-            sender: data.sender || 'customer',
-            phoneNumber
-          };
-        });
-
-      // Filter messages based on time interval
-      const now = new Date();
-      const filteredMessages = messages.filter(message => {
-        const messageDate = new Date(message.timestamp);
-        switch (dateRange) {
-          case 'today':
-            return messageDate.toDateString() === now.toDateString();
-          case 'week':
-            return (now.getTime() - messageDate.getTime()) <= 7 * 24 * 60 * 60 * 1000;
-          case 'month':
-            return (now.getTime() - messageDate.getTime()) <= 30 * 24 * 60 * 60 * 1000;
-          case 'all':
-            return true;
-          default:
-            return true;
+        }
+      }
+      
+      // Add to active contacts
+      activeContacts.add(phoneNumber);
+      phoneNumbers.push(phoneNumber);
+      
+      // Initialize tag counts
+      const contactTags = chatData.tags || [];
+      contactTags.forEach(tag => {
+        if (!messagesByTag[tag]) {
+          messagesByTag[tag] = 0;
         }
       });
-
-      // Update analytics data with this batch
-      filteredMessages.forEach(message => {
-    const date = new Date(message.timestamp);
-    const hour = date.getHours();
-    const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][date.getDay()];
-    
-    messagesByHour[hour]++;
-    messagesByDay[dayOfWeek]++;
-      });
-
-      totalMessages += filteredMessages.length;
-
-      if (messagesSnapshot.docs.length < BATCH_SIZE) break;
-    }
-
-    // Count contacts based on their first message timestamp
-    let activeContactCount = 0;
-    const now = new Date();
-    activeContacts.forEach((firstMessageTimestamp, phoneNumber) => {
-      const firstMessageDate = new Date(firstMessageTimestamp);
-      switch (dateRange) {
-        case 'today':
-          if (firstMessageDate.toDateString() === now.toDateString()) {
-            activeContactCount++;
-          }
-          break;
-        case 'week':
-          if ((now.getTime() - firstMessageTimestamp) <= 7 * 24 * 60 * 60 * 1000) {
-            activeContactCount++;
-          }
-          break;
-        case 'month':
-          if ((now.getTime() - firstMessageTimestamp) <= 30 * 24 * 60 * 60 * 1000) {
-            activeContactCount++;
-          }
-          break;
-        default:
-          activeContactCount = activeContacts.size;
+      
+      // Track contacts by lifecycle
+      if (!contactsByLifecycle[lifecycle]) {
+        contactsByLifecycle[lifecycle] = 0;
       }
-  });
-  
-  return {
+      contactsByLifecycle[lifecycle]++;
+      
+      // Initialize lifecycle message counts
+      if (!messagesByLifecycle[lifecycle]) {
+        messagesByLifecycle[lifecycle] = 0;
+      }
+    });
+    
+    console.log(`Analytics: Found ${activeContacts.size} contacts after filtering`);
+    
+    // Process messages for each contact
+    for (const phoneNumber of phoneNumbers) {
+      console.log(`Analytics: Processing messages for contact ${phoneNumber}`);
+      
+      // Get all messages for this contact
+      const messagesRef = collection(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber, 'messages');
+      const messagesSnapshot = await getDocs(messagesRef);
+      
+      console.log(`Analytics: Found ${messagesSnapshot.size} messages for contact ${phoneNumber}`);
+      
+      // Get contact tags and lifecycle for this phone number
+      const contactRef = doc(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber);
+      const contactDoc = await getDoc(contactRef);
+      const contactData = contactDoc.exists() ? contactDoc.data() : null;
+      const contactTags = contactData?.tags || [];
+      const contactLifecycle = contactData?.lifecycle || 'none';
+      
+      // Process each message
+      messagesSnapshot.forEach(messageDoc => {
+        const messageData = messageDoc.data();
+        
+        // Get timestamp - handle both Firestore Timestamp and JS Date
+        let timestamp: Date | null = null;
+        if (messageData.timestamp?.toDate) {
+          // Firestore Timestamp
+          timestamp = messageData.timestamp.toDate();
+        } else if (messageData.timestamp?.seconds) {
+          // Firestore Timestamp as object
+          timestamp = new Date(messageData.timestamp.seconds * 1000);
+        } else if (messageData.timestamp) {
+          // JS timestamp or ISO string
+          timestamp = new Date(messageData.timestamp);
+        }
+        
+        if (!timestamp) {
+          console.log('Analytics: Message has no valid timestamp, skipping');
+          return; // Skip this message
+        }
+        
+        // Apply date filter
+        if (dateRange) {
+          const daysDiff = Math.floor((now.getTime() - timestamp.getTime()) / (1000 * 60 * 60 * 24));
+          
+          if (dateRange === 'today' && timestamp.toDateString() !== now.toDateString()) {
+            return; // Skip messages from other days
+          } else if (dateRange === 'week' && daysDiff > 7) {
+            return; // Skip messages older than a week
+          } else if (dateRange === 'month' && daysDiff > 30) {
+            return; // Skip messages older than a month
+          }
+        }
+        
+        // Update statistics
+        const hour = timestamp.getHours();
+        const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][timestamp.getDay()];
+        
+        messagesByHour[hour]++;
+        messagesByDay[dayOfWeek]++;
+        totalMessages++;
+        
+        // Update tag message counts
+        contactTags.forEach(tag => {
+          if (messagesByTag[tag] !== undefined) {
+            messagesByTag[tag]++;
+          }
+        });
+        
+        // Update lifecycle message counts
+        if (messagesByLifecycle[contactLifecycle] !== undefined) {
+          messagesByLifecycle[contactLifecycle]++;
+        }
+      });
+    }
+    
+    console.log(`Analytics: Finished processing. Found ${totalMessages} messages across ${activeContacts.size} contacts`);
+    if (selectedTags.length > 0) {
+      console.log('Analytics: Message counts by tag:', messagesByTag);
+    }
+    if (selectedLifecycles.length > 0) {
+      console.log('Analytics: Message counts by lifecycle:', messagesByLifecycle);
+      console.log('Analytics: Contacts by lifecycle:', contactsByLifecycle);
+    }
+    
+    return {
       totalMessages,
-      totalContacts: activeContactCount,
-    messagesByHour: Object.entries(messagesByHour).map(([hour, count]) => ({
-      hour: parseInt(hour),
-      count
-    })),
-      messagesByDay
+      totalContacts: activeContacts.size,
+      messagesByHour: Object.entries(messagesByHour).map(([hour, count]) => ({
+        hour: parseInt(hour),
+        count
+      })),
+      messagesByDay,
+      messagesByTag,
+      messagesByLifecycle,
+      contactsByLifecycle,
+      selectedTags: selectedTags.length > 0 ? selectedTags : undefined,
+      selectedLifecycles: selectedLifecycles.length > 0 ? selectedLifecycles : undefined
     };
   } catch (error) {
     console.error("Error fetching analytics data:", error);
@@ -519,7 +592,10 @@ export const getAnalyticsData = async (dateRange?: 'today' | 'week' | 'month' | 
       messagesByDay: {
         'Sunday': 0, 'Monday': 0, 'Tuesday': 0, 'Wednesday': 0,
         'Thursday': 0, 'Friday': 0, 'Saturday': 0
-      }
+      },
+      messagesByTag: {},
+      messagesByLifecycle: {},
+      contactsByLifecycle: {}
     };
   }
 };
@@ -543,20 +619,37 @@ export const resetPassword = async (email: string) => {
 export const updateContactField = async (phoneNumber: string, field: string, value: any) => {
   try {
     const uid = getCurrentUser();
-    if (!uid) throw new Error('User not authenticated');
+    if (!uid) {
+      console.error('Error: User not authenticated');
+      throw new Error('User not authenticated');
+    }
 
+    console.log(`FIREBASE SERVICE - Updating ${field} for contact ${phoneNumber} to "${value}"`);
+    
     const contactRef = doc(db, 'Whatsapp_Data', uid, 'chats', phoneNumber);
+    
+    // First check if the contact exists
+    const contactSnap = await getDoc(contactRef);
+    if (!contactSnap.exists()) {
+      console.error(`FIREBASE SERVICE - Error: Contact ${phoneNumber} does not exist`);
+      throw new Error(`Contact ${phoneNumber} does not exist`);
+    }
+    
+    // Compare with current value
+    const currentData = contactSnap.data();
+    console.log(`FIREBASE SERVICE - Current ${field} value: "${currentData[field]}", New value: "${value}"`);
     
     // Create an update object with just the field to update
     const updateData = {
       [field]: value
     };
     
+    // Perform the update
     await updateDoc(contactRef, updateData);
-    console.log(`Updated ${field} for contact ${phoneNumber}`);
+    console.log(`FIREBASE SERVICE - ✅ Successfully updated ${field} for contact ${phoneNumber} to "${value}"`);
     return true;
   } catch (error) {
-    console.error('Error updating contact field:', error);
+    console.error(`FIREBASE SERVICE - ❌ Error updating ${field} for contact ${phoneNumber}:`, error);
     throw error;
   }
 };

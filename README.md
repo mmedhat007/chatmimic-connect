@@ -31,6 +31,25 @@ The application uses the following Supabase tables:
 
 This project uses OpenAI's `text-embedding-3-small` model to create embeddings for user configurations. These embeddings are stored in Supabase for semantic search and retrieval in n8n workflows.
 
+## Lifecycle Management
+
+### Features
+
+#### Manual Lifecycle Override
+
+The application includes an intelligent lifecycle tagging system that automatically categorizes contacts based on message content. However, when you manually set a contact's lifecycle stage through the dropdown menu, a "manual override" flag is activated. This prevents the automatic tagging system from changing the lifecycle stage until you decide to re-enable automatic tagging.
+
+**How it works:**
+- When you select a lifecycle stage from the dropdown, the contact is marked with `manually_set_lifecycle=true`
+- A small "M" badge appears next to the lifecycle dropdown to indicate manual mode is active
+- Automatic lifecycle tagging will not affect this contact until manual mode is disabled
+
+**To re-enable automatic tagging:**
+- Open the lifecycle dropdown
+- Select "Enable Auto-Tagging" to remove the manual override flag
+
+This feature ensures that your intentional categorizations of contacts are preserved while still benefiting from the automatic tagging system when desired.
+
 ## How can I edit this code?
 
 There are several ways of editing your application.
