@@ -7,8 +7,9 @@ export interface SheetColumn {
   id: string;
   name: string;
   description: string;
-  type: 'text' | 'date' | 'name' | 'product' | 'inquiry';
+  type: 'text' | 'date' | 'name' | 'product' | 'inquiry' | 'phone';
   aiPrompt: string;
+  isAutoPopulated?: boolean;
 }
 
 export interface SheetConfig {
@@ -19,6 +20,8 @@ export interface SheetConfig {
   columns: SheetColumn[];
   active: boolean;
   lastUpdated: number;
+  addTrigger?: 'first_message' | 'show_interest' | 'manual';
+  autoUpdateFields?: boolean;
 }
 
 /**
@@ -238,9 +241,11 @@ export const createSheet = async (config: SheetConfig) => {
 };
 
 /**
- * Append a row of data to the specified Google Sheet
+ * Append a row to a Google Sheet
+ * @param sheetId The ID of the sheet to append to
+ * @param data An object with column IDs as keys and values to append
  */
-export const appendSheetRow = async (sheetId: string, rowData: Record<string, string>) => {
+export const appendSheetRow = async (sheetId: string, data: Record<string, string>) => {
   const credentials = await getGoogleSheetsCredentials();
   const { accessToken } = credentials;
   
@@ -248,13 +253,11 @@ export const appendSheetRow = async (sheetId: string, rowData: Record<string, st
   const sheetConfig = await getSheetConfig(sheetId);
   if (!sheetConfig) throw new Error('Sheet configuration not found');
   
-  // Format the row data based on column order
-  const values = sheetConfig.columns.map(column => {
-    return rowData[column.id] || '';
-  });
+  // Create an array with the values in the correct order based on the config's columns
+  const values = sheetConfig.columns.map(column => data[column.id] || '');
   
-  // Append the data to the sheet
-  const appendResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:A:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+  // Append the row - fix the URL to use "A:A" consistently
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:A:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -267,12 +270,13 @@ export const appendSheetRow = async (sheetId: string, rowData: Record<string, st
     })
   });
 
-  if (!appendResponse.ok) {
-    const error = await appendResponse.json();
+  if (!response.ok) {
+    const error = await response.json();
     throw new Error(`Failed to append row: ${error.error?.message || 'Unknown error'}`);
   }
-
-  return await appendResponse.json();
+  
+  const result = await response.json();
+  return result;
 };
 
 /**
@@ -374,4 +378,106 @@ export const saveSheetConfig = async (config: SheetConfig) => {
   });
   
   return config;
+};
+
+/**
+ * Find a contact in a Google Sheet by phone number
+ * @param sheetId The ID of the sheet to search
+ * @param phoneNumber The phone number to find
+ * @returns The row index (1-based) if found, null otherwise
+ */
+export const findContactInSheet = async (sheetId: string, phoneNumber: string): Promise<number | null> => {
+  const credentials = await getGoogleSheetsCredentials();
+  const { accessToken } = credentials;
+  
+  // First, we need to get the sheet structure to know which column has phone numbers
+  const sheetConfig = await getSheetConfig(sheetId);
+  if (!sheetConfig) throw new Error('Sheet configuration not found');
+  
+  // Find which column contains phone numbers
+  const phoneColumnIndex = sheetConfig.columns.findIndex(
+    col => col.type === 'phone' || col.name.toLowerCase().includes('phone')
+  );
+  
+  if (phoneColumnIndex === -1) {
+    console.warn('No phone column found in sheet config');
+    return null;
+  }
+  
+  // Convert to A1 notation column
+  const phoneColumn = String.fromCharCode(65 + phoneColumnIndex);
+  
+  // Get all values from the phone column
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${phoneColumn}:${phoneColumn}`, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`
+    }
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Failed to fetch sheet data: ${error.error?.message || 'Unknown error'}`);
+  }
+  
+  const result = await response.json();
+  
+  // Skip header row (index 0) and search for the phone number
+  for (let i = 1; i < (result.values?.length || 0); i++) {
+    if (result.values[i] && result.values[i][0] === phoneNumber) {
+      return i + 1; // Convert to 1-based row index
+    }
+  }
+  
+  return null; // Not found
+};
+
+/**
+ * Update a row in a Google Sheet
+ * @param sheetId The ID of the sheet to update
+ * @param rowIndex The 1-based row index to update
+ * @param updates An object with column IDs as keys and new values
+ */
+export const updateSheetRow = async (
+  sheetId: string, 
+  rowIndex: number, 
+  updates: Record<string, string>
+) => {
+  const credentials = await getGoogleSheetsCredentials();
+  const { accessToken } = credentials;
+  
+  // Get the sheet config to know the column structure
+  const sheetConfig = await getSheetConfig(sheetId);
+  if (!sheetConfig) throw new Error('Sheet configuration not found');
+  
+  // For each update, we'll make a separate API call to update just that cell
+  for (const [columnId, value] of Object.entries(updates)) {
+    // Find the column index
+    const columnIndex = sheetConfig.columns.findIndex(col => col.id === columnId);
+    if (columnIndex === -1) continue; // Skip if column not found
+    
+    // Convert to A1 notation
+    const columnLetter = String.fromCharCode(65 + columnIndex);
+    const cellRef = `${columnLetter}${rowIndex}`;
+    
+    // Update the cell
+    const updateResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${cellRef}?valueInputOption=RAW`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        range: cellRef,
+        majorDimension: 'ROWS',
+        values: [[value]]
+      })
+    });
+
+    if (!updateResponse.ok) {
+      const error = await updateResponse.json();
+      throw new Error(`Failed to update cell ${cellRef}: ${error.error?.message || 'Unknown error'}`);
+    }
+  }
+  
+  return true;
 }; 

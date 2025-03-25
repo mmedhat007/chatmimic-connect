@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Switch } from './ui/switch';
-import { PlusCircle, Trash2, Info } from 'lucide-react';
+import { PlusCircle, Trash2, Info, Save, RefreshCw } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { toast } from 'react-hot-toast';
+import { updateBehaviorRules } from '../services/supabase';
+import { getCurrentUser } from '../services/firebase';
 
 interface BehaviorRule {
   id: string;
@@ -48,13 +51,21 @@ const predefinedRules = [
 ];
 
 const AgentBehaviorRules: React.FC<AgentBehaviorRulesProps> = ({ behaviorRules, onRulesChange }) => {
+  const [rules, setRules] = useState<BehaviorRule[]>(behaviorRules);
   const [newRule, setNewRule] = useState('');
   const [newRuleDescription, setNewRuleDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setRules(behaviorRules);
+  }, [behaviorRules]);
 
   const handleAddPredefinedRule = (rule: BehaviorRule) => {
     // Check if rule with this ID already exists
-    if (!behaviorRules.some(r => r.id === rule.id)) {
-      onRulesChange([...behaviorRules, { ...rule, enabled: true }]);
+    if (!rules.some(r => r.id === rule.id)) {
+      const updatedRules = [...rules, { ...rule, enabled: true }];
+      setRules(updatedRules);
+      onRulesChange(updatedRules);
     }
   };
 
@@ -68,25 +79,54 @@ const AgentBehaviorRules: React.FC<AgentBehaviorRulesProps> = ({ behaviorRules, 
       enabled: true,
     };
     
-    onRulesChange([...behaviorRules, newRuleObject]);
+    const updatedRules = [...rules, newRuleObject];
+    setRules(updatedRules);
+    onRulesChange(updatedRules);
     setNewRule('');
     setNewRuleDescription('');
   };
 
   const handleRemoveRule = (id: string) => {
-    onRulesChange(behaviorRules.filter(rule => rule.id !== id));
+    const updatedRules = rules.filter(rule => rule.id !== id);
+    setRules(updatedRules);
+    onRulesChange(updatedRules);
   };
 
   const handleToggleRule = (id: string) => {
-    onRulesChange(
-      behaviorRules.map(rule => 
-        rule.id === id ? { ...rule, enabled: !rule.enabled } : rule
-      )
+    const updatedRules = rules.map(rule => 
+      rule.id === id ? { ...rule, enabled: !rule.enabled } : rule
     );
+    setRules(updatedRules);
+    onRulesChange(updatedRules);
+  };
+
+  const saveRulesToSupabase = async (updatedRules: BehaviorRule[]) => {
+    const userUID = getCurrentUser();
+    if (!userUID) {
+      toast.error('User not authenticated');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await updateBehaviorRules(userUID, updatedRules);
+      toast.success('Behavior rules updated');
+    } catch (error) {
+      console.error('Error saving behavior rules:', error);
+      
+      // Show a more detailed error message
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      toast.error(`Failed to update behavior rules: ${errorMessage}`);
+      
+      // Revert to previous state if update failed
+      setRules(behaviorRules);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const unusedPredefinedRules = predefinedRules.filter(
-    predefined => !behaviorRules.some(rule => rule.id === predefined.id)
+    predefined => !rules.some(rule => rule.id === predefined.id)
   );
 
   return (
@@ -111,16 +151,19 @@ const AgentBehaviorRules: React.FC<AgentBehaviorRulesProps> = ({ behaviorRules, 
       </CardHeader>
       <CardContent>
         {/* Active rules */}
-        {behaviorRules.length > 0 ? (
+        {rules.length > 0 ? (
           <div className="space-y-4 mb-6">
             <h3 className="text-sm font-medium text-gray-700">Active Rules</h3>
-            {behaviorRules.map((rule) => (
+            {rules.map((rule, index) => (
               <div key={rule.id} className="flex items-start space-x-4 p-3 rounded-md border bg-white">
-                <Switch
-                  checked={rule.enabled}
-                  onCheckedChange={() => handleToggleRule(rule.id)}
-                  id={`toggle-${rule.id}`}
-                />
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={rule.enabled}
+                    onCheckedChange={(checked) => handleToggleRule(rule.id)}
+                    id={`toggle-${index}`}
+                  />
+                  <Label htmlFor={`toggle-${index}`}>Enabled</Label>
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm">{rule.rule}</p>
                   {rule.description && (
@@ -192,6 +235,17 @@ const AgentBehaviorRules: React.FC<AgentBehaviorRulesProps> = ({ behaviorRules, 
           >
             <PlusCircle className="mr-2 h-4 w-4" /> 
             Add Custom Rule
+          </Button>
+        </div>
+
+        <div className="flex justify-end mt-6">
+          <Button 
+            onClick={() => saveRulesToSupabase(rules)} 
+            disabled={saving} 
+            className="flex items-center gap-2"
+          >
+            {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save Behavior Rules
           </Button>
         </div>
       </CardContent>

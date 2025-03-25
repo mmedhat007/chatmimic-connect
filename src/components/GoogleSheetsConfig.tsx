@@ -87,6 +87,9 @@ const GoogleSheetsConfig: React.FC = () => {
     lastUpdated: Date.now()
   });
 
+  const [addTrigger, setAddTrigger] = useState<'first_message' | 'show_interest' | 'manual'>('first_message');
+  const [autoUpdateFields, setAutoUpdateFields] = useState(true);
+
   // Check if Google Sheets is connected and fetch sheets
   useEffect(() => {
     const checkConnection = async () => {
@@ -170,6 +173,20 @@ const GoogleSheetsConfig: React.FC = () => {
   const handleEditConfig = (config: SheetConfig) => {
     setActiveConfig(config);
     setNewConfig({ ...config });
+    
+    // Load the addTrigger and autoUpdateFields from the config if they exist
+    if (config.addTrigger) {
+      setAddTrigger(config.addTrigger);
+    } else {
+      setAddTrigger('first_message'); // Default
+    }
+    
+    if (config.autoUpdateFields !== undefined) {
+      setAutoUpdateFields(config.autoUpdateFields);
+    } else {
+      setAutoUpdateFields(true); // Default
+    }
+    
     setIsEditing(true);
   };
 
@@ -177,11 +194,22 @@ const GoogleSheetsConfig: React.FC = () => {
     setSaving(true);
     
     try {
+      // Create/update the sheet with the new configuration properties
+      const updatedConfig: SheetConfig = {
+        ...newConfig,
+        addTrigger,
+        autoUpdateFields,
+        columns: newConfig.columns.map(col => ({
+          ...col,
+          isAutoPopulated: col.type === 'phone' || col.name.toLowerCase().includes('phone')
+        }))
+      };
+      
       // Create/update the sheet
-      const updatedConfig = await createSheet(newConfig);
+      const configWithSheet = await createSheet(updatedConfig);
       
       // Save the configuration
-      const savedConfig = await saveSheetConfig(updatedConfig);
+      const savedConfig = await saveSheetConfig(configWithSheet);
       
       // Update local state
       const configIndex = savedConfigs.findIndex(c => c.sheetId === savedConfig.sheetId);
@@ -329,28 +357,66 @@ const GoogleSheetsConfig: React.FC = () => {
         return;
       }
       
-      // Create a test message document in Firebase
+      // Check if any sheet config is active
+      if (!savedConfigs.some(config => config.active)) {
+        toast.error('Please activate at least one sheet configuration before testing');
+        return;
+      }
+      
+      toast.loading('Processing test message...', { id: 'test-integration' });
+      
+      // Create a test message document in Firebase with comprehensive test data
       await setDoc(
         doc(db, `Whatsapp_Data/${userUID}/chats/${testPhoneNumber}/messages/${testMessageId}`),
         {
-          message: 'This is a test message to verify the Google Sheets integration. My name is Test User, my email is test@example.com, and my phone number is 123-456-7890. I am interested in your product.',
+          message: 'Hello, my name is John Smith. I\'m interested in your luxury villas in Palm Jumeirah. My phone number is +971501234567. I would like to know the pricing and availability for 3-bedroom units for a move-in date of 2023-10-15. Thanks!',
           timestamp: Date.now(),
           sender: 'user'
         }
       );
       
       // Import and call processWhatsAppMessage with the correct parameters
-      const { processWhatsAppMessage } = await import('../services/whatsappGoogleIntegration');
-      const result = await processWhatsAppMessage(testPhoneNumber, testMessageId);
-      
-      if (result) {
-        toast.success('Test message successfully processed and added to Google Sheets');
-      } else {
-        toast.error('Test message processed but no data was added to sheets');
+      try {
+        const { processWhatsAppMessage } = await import('../services/whatsappGoogleIntegration');
+        const result = await processWhatsAppMessage(testPhoneNumber, testMessageId);
+        
+        if (result) {
+          toast.success('Test successful! A test message was processed and data was added to your Google Sheet. Check your spreadsheet to see the results.', 
+            { id: 'test-integration', duration: 6000 }
+          );
+        } else {
+          toast.error('Test message processed but no data was added to sheets. Check that your sheet is correctly configured.', 
+            { id: 'test-integration', duration: 5000 }
+          );
+        }
+      } catch (processingError) {
+        console.error('Error processing test message:', processingError);
+        
+        // Check if it's an AI model error
+        if (processingError.message && processingError.message.includes('model')) {
+          toast.error(
+            'AI model error: Please check your Groq API key and ensure you have access to the deepseek-r1-distill-llama-70b model', 
+            { id: 'test-integration', duration: 5000 }
+          );
+        } else if (processingError.message && processingError.message.includes('permission')) {
+          toast.error(
+            'Google Sheets permission error: Please make sure your Google account has write access to the selected sheet', 
+            { id: 'test-integration', duration: 5000 }
+          );
+        } else if (processingError.message && processingError.message.includes('token')) {
+          toast.error(
+            'Authentication error: Your Google token has expired. Please disconnect and reconnect your Google account', 
+            { id: 'test-integration', duration: 5000 }
+          );
+        } else {
+          toast.error(`Failed to process test message: ${processingError.message || 'Unknown error'}`, 
+            { id: 'test-integration', duration: 5000 }
+          );
+        }
       }
     } catch (error) {
-      console.error('Error testing integration:', error);
-      toast.error('Failed to test Google Sheets integration: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      console.error('Error setting up test integration:', error);
+      toast.error('Failed to test Google Sheets integration: ' + (error instanceof Error ? error.message : 'Unknown error'), { id: 'test-integration' });
     }
   };
 
@@ -460,6 +526,49 @@ const GoogleSheetsConfig: React.FC = () => {
                   onCheckedChange={(checked) => setNewConfig({...newConfig, active: checked})}
                 />
                 <Label htmlFor="active-config">Active</Label>
+              </div>
+            </div>
+
+            {/* New fields for addTrigger and autoUpdateFields */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <div className="space-y-2">
+                <Label htmlFor="add-trigger">When to add contacts</Label>
+                <Select 
+                  value={addTrigger} 
+                  onValueChange={(value: 'first_message' | 'show_interest' | 'manual') => setAddTrigger(value)}
+                >
+                  <SelectTrigger id="add-trigger">
+                    <SelectValue placeholder="Select when to add contacts" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="first_message">On first message</SelectItem>
+                    <SelectItem value="show_interest">When they show interest</SelectItem>
+                    <SelectItem value="manual">Manual only</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-gray-500">
+                  {addTrigger === 'first_message' ? (
+                    "Contacts will be added to the sheet when they send their first message"
+                  ) : addTrigger === 'show_interest' ? (
+                    "Contacts will be added when AI detects they're showing interest in your products/services"
+                  ) : (
+                    "Contacts will only be added manually (through test or API calls)"
+                  )}
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="auto-update" className="flex-1">Auto-update fields</Label>
+                  <Switch 
+                    id="auto-update"
+                    checked={autoUpdateFields}
+                    onCheckedChange={setAutoUpdateFields}
+                  />
+                </div>
+                <p className="text-xs text-gray-500">
+                  When enabled, the system will update existing rows with new information detected in messages
+                </p>
               </div>
             </div>
 
@@ -615,17 +724,22 @@ const GoogleSheetsConfig: React.FC = () => {
 
       {/* Test Integration */}
       {isGoogleAuthorized && userSheets.length > 0 && savedConfigs.some(config => config.active) && (
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h2 className="text-xl font-semibold mb-4">Test Integration</h2>
-          <p className="text-gray-600 mb-4">
-            Test your Google Sheets integration by sending a sample message. This will help verify that data extraction and sheet updates are working correctly.
+        <div className="mt-4 p-4 bg-blue-50 rounded-md border border-blue-100">
+          <h3 className="text-sm font-medium text-blue-800 mb-2">Test Your Integration</h3>
+          <p className="text-xs text-blue-600 mb-3">
+            This will create a test message with sample customer data to verify your Google Sheets integration is working correctly.
+            The test will follow your configuration settings for when contacts should be added and what data should be extracted.
           </p>
-          <button
-            onClick={handleTestIntegration}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md"
+          <Button 
+            onClick={handleTestIntegration} 
+            variant="outline" 
+            className="w-full border-blue-200 text-blue-700 hover:bg-blue-100"
           >
-            Send Test Message
-          </button>
+            <div className="flex items-center justify-center w-full">
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              Test Google Sheets Integration
+            </div>
+          </Button>
         </div>
       )}
     </div>
