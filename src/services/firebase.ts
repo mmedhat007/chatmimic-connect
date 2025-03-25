@@ -754,3 +754,28 @@ export const resetStageName = async (stageId: string) => {
     throw error;
   }
 };
+
+/**
+ * Get a contact by phone number
+ */
+export const getContactByPhone = async (phone: string): Promise<Contact | null> => {
+  const contactsRef = collection(db, 'Contacts');
+  const q = query(contactsRef, where('phone', '==', phone));
+  const snapshot = await getDocs(q);
+  
+  if (snapshot.empty) return null;
+  
+  const doc = snapshot.docs[0];
+  return {
+    id: doc.id,
+    ...doc.data()
+  } as Contact;
+};
+
+/**
+ * Update a contact's information
+ */
+export const updateContact = async (contactId: string, updates: Partial<Contact>): Promise<void> => {
+  const contactRef = doc(db, 'Contacts', contactId);
+  await updateDoc(contactRef, updates);
+};

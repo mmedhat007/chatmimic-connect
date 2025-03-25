@@ -140,35 +140,32 @@ export const saveUserConfig = async (uid: string, config: any): Promise<boolean>
       return false;
     }
 
-    // Extract behavior_rules if they exist and consolidate into a single description
+    // Extract behavior_rules using the correct format
     const behaviorRulesArray = config.behavior_rules || [];
     console.log('[saveUserConfig] Extracting behavior_rules:', behaviorRulesArray);
     console.log('[saveUserConfig] Number of behavior rules:', behaviorRulesArray.length);
     
-    // Create a single description from all active rules
-    let consolidatedDescription = "";
+    // Get only enabled rules
+    const enabledRules = behaviorRulesArray.filter(rule => rule.enabled);
+    console.log('[saveUserConfig] Number of enabled rules:', enabledRules.length);
     
-    if (behaviorRulesArray.length > 0) {
-      // Filter enabled rules and extract their descriptions
-      const enabledRules = behaviorRulesArray.filter(rule => rule.enabled);
-      
-      // Combine all rule descriptions with period separators
-      if (enabledRules.length > 0) {
-        consolidatedDescription = enabledRules
-          .map(rule => '.' + rule.description)
-          .join(' ');
-      }
-    }
+    // Format each rule correctly - USING THE RULE TITLE, NOT JUST DESCRIPTION
+    const formattedRules = enabledRules.map(rule => {
+      // Include rule title and description if available
+      return rule.description 
+        ? `${rule.rule}: ${rule.description}` 
+        : rule.rule;
+    });
     
-    // Create a simplified behavior rules object with the consolidated description
+    // Create the simplified behavior rules format with RULES not description
     const simplifiedBehaviorRules = {
       rules: [
         {
-          description: consolidatedDescription
+          rules: formattedRules.join(' | ')
         }
       ],
       last_updated: new Date().toISOString(),
-      version: '1.0'
+      version: "1.0"
     };
 
     console.log('[saveUserConfig] Created simplified behavior rules object:', simplifiedBehaviorRules);
@@ -179,7 +176,7 @@ export const saveUserConfig = async (uid: string, config: any): Promise<boolean>
       temperature: 0.7, // Default or extract from config if available
       max_tokens: 500,  // Default or extract from config if available
       full_config: config, // Store the entire configuration object
-      behavior_rules: simplifiedBehaviorRules // Store simplified behavior rules
+      behavior_rules: simplifiedBehaviorRules // Store simplified behavior rules using the correct format
     };
 
     // Update or insert based on whether a record exists
@@ -458,14 +455,13 @@ export const deleteEmbeddings = async (uid: string, queryName: string = null): P
 // Function to update embeddings for the AutomationsPage
 export const updateEmbeddings = async (uid: string, content: string, queryName: string): Promise<boolean> => {
   try {
-    // Try to delete existing embeddings, but continue even if it fails
-    try {
-      await deleteEmbeddings(uid, queryName);
-    } catch (deleteError) {
-      console.error('Error deleting embeddings, continuing anyway:', deleteError);
+    // Skip updating behavior_rules embeddings completely
+    if (queryName === 'behavior_rules') {
+      console.log('Skipping behavior_rules embeddings update as requested');
+      return true;
     }
     
-    // Create new embeddings
+    // Create new embeddings without deleting existing ones
     // For predefined sections in AutomationsPage, add a section type to metadata
     return await createEmbeddings(uid, content, queryName, {
       section_type: queryName,
@@ -474,5 +470,115 @@ export const updateEmbeddings = async (uid: string, content: string, queryName: 
   } catch (error) {
     console.error('Error updating embeddings:', error);
     return false;
+  }
+};
+
+/**
+ * Update behavior rules in Supabase
+ */
+export const updateBehaviorRules = async (userId: string, rules: any[]) => {
+  try {
+    console.log('Updating behavior rules for user:', userId);
+    
+    // Get only enabled rules
+    const enabledRules = rules.filter(rule => rule.enabled);
+    console.log('Enabled rules count:', enabledRules.length);
+    
+    // Format each rule correctly - USING THE RULE TITLE, NOT JUST DESCRIPTION
+    const formattedRules = enabledRules.map(rule => {
+      // Include rule title and description if available
+      return rule.description 
+        ? `${rule.rule}: ${rule.description}` 
+        : rule.rule;
+    });
+    
+    // Create the simplified behavior rules format with RULES not description
+    const simplifiedBehaviorRules = {
+      rules: [
+        {
+          rules: formattedRules.join(' | ')
+        }
+      ],
+      last_updated: new Date().toISOString(),
+      version: "1.0"
+    };
+
+    console.log('Created simplified behavior rules:', JSON.stringify(simplifiedBehaviorRules, null, 2));
+    
+    // Check if a record already exists
+    const { data: existingConfig, error: fetchError } = await supabase
+      .from('user_configs')
+      .select('id, full_config')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error('Error checking existing config:', fetchError);
+      throw fetchError;
+    }
+
+    let updateResult;
+    
+    if (existingConfig) {
+      // Update existing record - ONLY IN USER_CONFIGS TABLE
+      console.log('Updating user_configs table only with behavior_rules and full_config');
+      
+      // First, prepare the updated full_config
+      const updatedFullConfig = existingConfig.full_config ? { ...existingConfig.full_config } : {};
+      updatedFullConfig.behavior_rules = rules; // Complete rule objects
+      
+      // Update both columns in a single operation
+      const { data, error } = await supabase
+        .from('user_configs')
+        .update({
+          behavior_rules: simplifiedBehaviorRules, // With rule titles
+          full_config: updatedFullConfig,         // Complete objects
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', userId);
+
+      if (error) {
+        throw error;
+      }
+      
+      updateResult = data;
+      console.log('Successfully updated user_configs table');
+    } else {
+      // Create a new record
+      console.log('No existing config found, creating new record');
+      
+      const { data, error } = await supabase
+        .from('user_configs')
+        .insert({
+          user_id: userId,
+          behavior_rules: simplifiedBehaviorRules,
+          full_config: { behavior_rules: rules },
+          updated_at: new Date().toISOString(),
+          temperature: 0.7,
+          max_tokens: 500
+        });
+
+      if (error) throw error;
+      updateResult = data;
+    }
+    
+    // Update localStorage cache
+    try {
+      const storedConfig = localStorage.getItem(`user_${userId}_config`);
+      if (storedConfig) {
+        const config = JSON.parse(storedConfig);
+        config.behavior_rules = rules;
+        localStorage.setItem(`user_${userId}_config`, JSON.stringify(config));
+        console.log('Updated behavior rules in localStorage cache');
+      }
+    } catch (e) {
+      console.error('Error updating localStorage cache:', e);
+    }
+    
+    console.log('Successfully updated behavior rules in user_configs only');
+    return updateResult;
+  } catch (error) {
+    console.error('Error updating behavior rules:', error);
+    throw error;
   }
 }; 

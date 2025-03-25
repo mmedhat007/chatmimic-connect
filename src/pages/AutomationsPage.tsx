@@ -70,6 +70,7 @@ const AutomationsPage = () => {
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [embeddingsAvailable, setEmbeddingsAvailable] = useState<boolean | null>(null);
   const userUID = getCurrentUser();
+  const [activeTab, setActiveTab] = useState("company");
 
   // Check if embeddings are available
   useEffect(() => {
@@ -298,19 +299,12 @@ const AutomationsPage = () => {
             'business_processes'
           );
           
-          // Behavior rules embeddings
-          if (config.behavior_rules && config.behavior_rules.length > 0) {
-            await updateEmbeddings(
-              userUID,
-              JSON.stringify(config.behavior_rules),
-              'behavior_rules'
-            );
-          }
-          
-          // Complete config embeddings
+          // Complete config embeddings (excluding behavior_rules)
+          const configWithoutBehaviorRules = { ...config };
+          delete configWithoutBehaviorRules.behavior_rules;
           await updateEmbeddings(
             userUID,
-            JSON.stringify(config),
+            JSON.stringify(configWithoutBehaviorRules),
             'complete_config'
           );
           
@@ -560,13 +554,15 @@ const AutomationsPage = () => {
               <h1 className="text-2xl font-bold">Agent Configuration</h1>
               <p className="text-gray-500">Customize how your AI agent interacts with customers</p>
             </div>
-            <Button onClick={handleSave} disabled={saving} className="flex items-center gap-2">
-              {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save Changes
-            </Button>
+            {activeTab !== "behavior" && (
+              <Button onClick={handleSave} disabled={saving} className="flex items-center gap-2">
+                {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save Changes
+              </Button>
+            )}
           </div>
           
-          <Tabs defaultValue="company">
+          <Tabs defaultValue="company" onValueChange={setActiveTab}>
             <TabsList className="grid grid-cols-3 md:grid-cols-7 mb-8">
               <TabsTrigger value="company">Company</TabsTrigger>
               <TabsTrigger value="roles">Roles</TabsTrigger>
