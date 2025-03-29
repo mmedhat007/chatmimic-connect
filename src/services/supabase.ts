@@ -2,14 +2,19 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 
 // Supabase configuration
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://kutdbashpuuysxywvzgs.supabase.co';
-const supabaseKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1dGRiYXNocHV1eXN4eXd2emdzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0MjAwMTI2NCwiZXhwIjoyMDU3NTc3MjY0fQ.nU4SxBAAIZdXOihfS0Uo_uFd_QYVtRj9I0VYx00fIOU';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || '';
 
 // OpenAI configuration
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || '';
 
 // Initialize Supabase client
 export const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Check if required environment variables are set
+if (!supabaseUrl || !supabaseKey) {
+  console.error('Supabase URL or key is not properly configured');
+}
 
 // Initialize OpenAI client with dangerouslyAllowBrowser set to true
 // Note: In a production environment, embedding generation should be done server-side
