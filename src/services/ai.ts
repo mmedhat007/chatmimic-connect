@@ -2,8 +2,8 @@
 import axios from 'axios';
 import { SheetColumn } from './googleSheets';
 
-// Initialize the Groq API client with the correct API key
-const GROQ_API_KEY = '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';
+// Initialize the Groq API client with API key from environment variables
+const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || '';
 // Update to the correct model name
 const MODEL_NAME = 'deepseek-r1-distill-llama-70b';
 
@@ -15,7 +15,7 @@ const MODEL_NAME = 'deepseek-r1-distill-llama-70b';
  */
 export const extractDataFromMessage = async (message: string, fields: any[]): Promise<Record<string, string>> => {
   try {
-    // Use the constant API key directly instead of environment variables
+    // Use the environment variable
     const apiKey = GROQ_API_KEY;
     if (!apiKey) {
       throw new Error('Groq API key not configured properly');

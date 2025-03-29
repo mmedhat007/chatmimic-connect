@@ -7,7 +7,7 @@ interface AgentControlsProps {
 }
 
 const AgentControls = ({ phoneNumber }: AgentControlsProps) => {
-  const [activeAgent, setActiveAgent] = useState<'ai' | 'human' | 'none'>('none');
+  const [activeAgent, setActiveAgent] = useState<'ai' | 'human'>('ai');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -22,11 +22,19 @@ const AgentControls = ({ phoneNumber }: AgentControlsProps) => {
         const data = doc.data();
         if (data.humanAgent) {
           setActiveAgent('human');
-        } else if (data.agentStatus === 'on') {
-          setActiveAgent('ai');
         } else {
-          setActiveAgent('none');
+          // Default to AI agent, never "none"
+          setActiveAgent('ai');
+          
+          // If agentStatus is not already 'on', update it
+          if (data.agentStatus !== 'on') {
+            updateDoc(chatRef, { agentStatus: 'on', humanAgent: false })
+              .catch(err => console.error('Error setting default AI agent:', err));
+          }
         }
+      } else {
+        // If document doesn't exist, default to AI agent
+        setActiveAgent('ai');
       }
       setLoading(false);
     });
@@ -41,12 +49,10 @@ const AgentControls = ({ phoneNumber }: AgentControlsProps) => {
     try {
       const chatRef = doc(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber);
       
-      // Cycle through: none -> AI -> human -> none
-      const newState = {
-        none: { agentStatus: 'on', humanAgent: false }, // Switch to AI
-        ai: { agentStatus: 'off', humanAgent: true },   // Switch to human
-        human: { agentStatus: 'off', humanAgent: false } // Switch to none
-      }[activeAgent];
+      // Cycle only between AI and human, never to "none"
+      const newState = activeAgent === 'ai'
+        ? { agentStatus: 'off', humanAgent: true }   // Switch to human
+        : { agentStatus: 'on', humanAgent: false };  // Switch to AI
 
       await updateDoc(chatRef, newState);
     } catch (error) {
@@ -59,25 +65,15 @@ const AgentControls = ({ phoneNumber }: AgentControlsProps) => {
   }
 
   const getButtonStyle = () => {
-    switch (activeAgent) {
-      case 'ai':
-        return 'bg-green-100 text-green-800';
-      case 'human':
-        return 'bg-blue-100 text-blue-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
+    return activeAgent === 'ai'
+      ? 'bg-green-100 text-green-800'
+      : 'bg-blue-100 text-blue-800';
   };
 
   const getButtonText = () => {
-    switch (activeAgent) {
-      case 'ai':
-        return 'AI Agent Active';
-      case 'human':
-        return 'Human Agent Active';
-      default:
-        return 'No Agent Active';
-    }
+    return activeAgent === 'ai'
+      ? 'AI Agent Active'
+      : 'Human Agent Active';
   };
 
   return (
@@ -89,7 +85,7 @@ const AgentControls = ({ phoneNumber }: AgentControlsProps) => {
         {getButtonText()}
       </button>
       <div className="text-xs text-gray-500">
-        Click to cycle between: No Agent → AI Agent → Human Agent
+        Click to switch between: AI Agent ↔ Human Agent
       </div>
     </div>
   );

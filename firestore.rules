@@ -13,8 +13,16 @@ service cloud.firestore {
     }
 
     // Helper function to check if user is an admin
+    // Uses role-based access control instead of hardcoded UID
     function isAdmin() {
-      return request.auth.uid == "0ThUjgEGmeTyM9jaUcMgreDJKNa2";
+      return isAuthenticated() && exists(/databases/$(database)/documents/Roles/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/Roles/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Roles collection - only admins can modify roles
+    match /Roles/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow write: if isAdmin();
     }
 
     // Users collection rules
@@ -28,9 +36,11 @@ service cloud.firestore {
       }
     }
 
-    // Allow admin to list all users
+    // Admin can list users, but with certain restrictions
     match /Users/{userId} {
-      allow list: if isAuthenticated() && isAdmin();
+      allow list: if isAuthenticated() && isAdmin() && 
+                    // Limit fields that can be listed to prevent data leakage
+                    request.query.limit <= 100;
     }
 
     // Whatsapp_Data collection rules
@@ -54,12 +64,12 @@ service cloud.firestore {
       }
     }
 
-    // Collection group query rule for messages
+    // Collection group query rule for messages - more restrictive to prevent excessive reads
     match /{document=**}/messages/{messageId} {
       allow read: if isAuthenticated() && (
         isOwner(request.path[3]) || // Checks if user owns the parent Whatsapp_Data document
         isAdmin()
-      );
+      ) && request.query.limit <= 500; // Prevent excessively large queries
     }
 
     // Deny access to all other paths by default

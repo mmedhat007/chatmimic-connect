@@ -31,6 +31,9 @@ interface ExtractedData {
 // Track contacts that have been added to sheets to prevent duplicates
 const addedContacts: Record<string, Set<string>> = {};
 
+// Keep track of last processed timestamp per chat
+const lastProcessedTimestamps: Record<string, number> = {};
+
 /**
  * Start listening for new WhatsApp messages and update Google Sheets based on active configurations
  * @returns A cleanup function to stop listening
@@ -42,12 +45,7 @@ export const startWhatsAppGoogleSheetsIntegration = async (): Promise<() => void
     return () => {};
   }
 
-  // Clear the processed messages to force reprocessing existing ones
-  Object.keys(processedMessages).forEach(key => {
-    delete processedMessages[key];
-  });
-  
-  // Clear processing flags
+  // Reset message processing state
   Object.keys(processingMessages).forEach(key => {
     delete processingMessages[key];
   });
@@ -77,11 +75,9 @@ export const startWhatsAppGoogleSheetsIntegration = async (): Promise<() => void
   
   const chatsRef = collection(db, whatsappChatsPath);
   
-  // Set up listeners for new chat updates only - do not process existing chats
+  // Set up listener for chats
   const unsubscribeChats = onSnapshot(chatsRef, async (chatSnapshot) => {
-    console.log(`Received update in WhatsApp chats collection, ${chatSnapshot.size} chats found`);
-    
-    // Process each chat that changed (new or updated)
+    // Only process changes (added or modified chats)
     for (const change of chatSnapshot.docChanges()) {
       // Only process added or modified chats
       if (change.type !== 'added' && change.type !== 'modified') continue;
@@ -112,63 +108,91 @@ export const startWhatsAppGoogleSheetsIntegration = async (): Promise<() => void
         ...chatDoc.data()
       } as Contact;
       
-      // Initialize message tracking for this chat if needed
-      if (!processedMessages[phoneNumber]) {
-        processedMessages[phoneNumber] = [];
+      // Get the chat's latest message timestamp
+      let latestTimestamp = contact.lastMessageTime || 0;
+      
+      // If we haven't processed this chat before, initialize it
+      if (!lastProcessedTimestamps[phoneNumber]) {
+        // Start by handling only new messages that arrive after integration is started
+        // We record the current timestamp to only process future messages
+        lastProcessedTimestamps[phoneNumber] = Date.now();
+        console.log(`Initialized timestamp tracking for ${phoneNumber} at ${lastProcessedTimestamps[phoneNumber]}`);
       }
       
-      // Set up a listener for messages in this chat
+      // Set up the message listener to specifically target new messages
       const messagesPath = `${whatsappChatsPath}/${phoneNumber}/messages`;
       const messagesRef = collection(db, messagesPath);
       
-      // Create a simpler query that doesn't require a composite index
-      const messagesQuery = query(messagesRef);
+      // Set up a query to only get messages created after our last processed timestamp
+      // const latestMessageTimestamp = lastProcessedTimestamps[phoneNumber] || 0;
       
       // Listen for new messages in this chat
-      const unsubscribeMessages = onSnapshot(messagesQuery, async (messagesSnapshot) => {
+      const unsubscribeMessages = onSnapshot(messagesRef, async (messagesSnapshot) => {
         console.log(`Received message update for ${phoneNumber}, ${messagesSnapshot.size} messages found`);
         
-        // Process each message - filter for user messages in code
-        const newMessages = [];
+        // Filter for changes - we only want newly added messages
+        const messageChanges = messagesSnapshot.docChanges().filter(change => change.type === 'added');
         
-        for (const messageDoc of messagesSnapshot.docs) {
+        if (messageChanges.length === 0) {
+          console.log(`No new messages for ${phoneNumber}`);
+          return;
+        }
+        
+        console.log(`Found ${messageChanges.length} new messages for ${phoneNumber}`);
+        
+        // Process each newly added message
+        const newMessages: Message[] = [];
+        
+        for (const change of messageChanges) {
+          const messageDoc = change.doc;
           const messageData = messageDoc.data();
           
-          // Skip messages not from user (customer)
-          // Note: In some systems, 'user' indicates the customer, in others it might be different
-          if (messageData.sender !== 'user' && messageData.sender !== 'customer' && !messageData.isFromCustomer) {
-            continue;
-          }
-          
-          // Skip if we've already processed this message
-          if (processedMessages[phoneNumber].some(pm => pm.id === messageDoc.id)) {
-            continue;
-          }
-          
-          const message = {
+          // Create a properly typed message object
+          const message: Message = {
             id: messageDoc.id,
-            ...messageData as Message
+            ...messageData as any // Cast to any first since Firestore data might not perfectly match our type
           };
+          
+          // Skip messages not from the customer
+          // Check if the message is from the customer using all possible indicators
+          const isFromCustomer = 
+            message.isFromCustomer === true || 
+            message.sender === 'user';
+          
+          if (!isFromCustomer) {
+            continue;
+          }
+          
+          // Skip messages with timestamps older than our last processed timestamp
+          if (message.timestamp <= lastProcessedTimestamps[phoneNumber]) {
+            console.log(`Skipping already processed message ${message.id} (${message.timestamp} <= ${lastProcessedTimestamps[phoneNumber]})`);
+            continue;
+          }
+          
+          // This is a new customer message we haven't processed yet
+          console.log(`Found new unprocessed message: ${message.id}`);
           
           newMessages.push(message);
           
-          // Mark as processed to avoid duplicate processing
-          processedMessages[phoneNumber].push({
-            id: message.id,
-            timestamp: message.timestamp
-          });
+          // Update our latest timestamp if this message is newer
+          if (message.timestamp > latestTimestamp) {
+            latestTimestamp = message.timestamp;
+          }
         }
         
-        console.log(`Found ${newMessages.length} new messages to process for ${phoneNumber}`);
+        if (newMessages.length === 0) {
+          console.log(`No new user messages to process for ${phoneNumber}`);
+          return;
+        }
         
-        // Sort messages by timestamp to process in order
+        // Sort messages by timestamp (oldest first)
         newMessages.sort((a, b) => a.timestamp - b.timestamp);
         
         // Process new messages
         for (const message of newMessages) {
           console.log(`Processing message: ${message.id} - ${message.message?.substring(0, 30) || 'No message content'}...`);
           
-          // Generate a unique processing ID for this message and config combination
+          // Generate a unique processing ID for this message
           const processingId = `${message.id}`;
           
           // Skip if already processing (prevents duplicate sheet entries)
@@ -189,18 +213,16 @@ export const startWhatsAppGoogleSheetsIntegration = async (): Promise<() => void
                 console.error(`Error processing message for sheet "${config.name}":`, error);
               }
             }
+            
+            // Update the last processed timestamp for this chat
+            lastProcessedTimestamps[phoneNumber] = message.timestamp;
+            console.log(`Updated last processed timestamp for ${phoneNumber} to ${message.timestamp}`);
+            
           } finally {
             // Clear processing flag when done
             delete processingMessages[processingId];
           }
         }
-        
-        // Clean up old processed messages (older than 24 hours)
-        const ONE_DAY = 24 * 60 * 60 * 1000;
-        const now = Date.now();
-        processedMessages[phoneNumber] = processedMessages[phoneNumber].filter(
-          pm => now - pm.timestamp < ONE_DAY
-        );
       });
       
       // Store the unsubscribe function
@@ -500,7 +522,13 @@ export const processWhatsAppMessage = async (
         throw new Error('Message not found');
       }
       
-      const message = messageDoc.data() as Message;
+      // Create a properly typed message object
+      const messageData = messageDoc.data();
+      const message: Message = {
+        id: messageId,
+        ...messageData as any
+      };
+      
       console.log(`Found message: ${JSON.stringify(message)}`);
       
       // Get or create the contact document
@@ -530,7 +558,9 @@ export const processWhatsAppMessage = async (
         await setDoc(chatDocRef, {
           lastMessage: message.message,
           lastMessageTime: message.timestamp,
-          phoneNumber: phoneNumber
+          phoneNumber: phoneNumber,
+          agentStatus: 'on',  // Ensure AI agent is active by default
+          humanAgent: false   // Make sure human agent is not active
         });
         
         console.log(`Created contact document for ${phoneNumber}`);
@@ -545,10 +575,9 @@ export const processWhatsAppMessage = async (
         return false;
       }
       
-      // Clear any existing entries in processedMessages for this phone number for testing
-      if (processedMessages[phoneNumber]) {
-        processedMessages[phoneNumber] = [];
-      }
+      // Reset the last processed timestamp for this chat to force processing this test message
+      // For a test message, we want to process it regardless of timestamp
+      lastProcessedTimestamps[phoneNumber] = message.timestamp - 1;
       
       // Reset per-sheet cache for this phone number to force fresh checks
       for (const config of activeConfigs) {
@@ -567,6 +596,9 @@ export const processWhatsAppMessage = async (
           throw error; // Re-throw to show in UI
         }
       }
+      
+      // Update the last processed timestamp to include this test message
+      lastProcessedTimestamps[phoneNumber] = message.timestamp;
       
       console.log(`Test message from ${phoneNumber} processed successfully`);
       return true;

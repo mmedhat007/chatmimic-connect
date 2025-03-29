@@ -823,7 +823,7 @@ const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpda
                 ? "Please upgrade to the paid plan to send messages" 
                 : isHumanAgent 
                   ? "Type a message..." 
-                  : "Message sending is disabled - Enable human agent to send messages"
+                  : "AI agent is responding to messages - Switch to human agent to send messages"
             }
             className={`w-full pr-12 pl-4 py-2 border border-gray-300 rounded-lg ${
               isHumanAgent && isPaid
