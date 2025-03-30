@@ -1,0 +1,15 @@
+[Unit]
+Description=ChatMimic Connect Server
+After=network.target
+
+[Service]
+Type=simple
+User=denoteai-api-chat
+WorkingDirectory=/home/denoteai-api-chat/htdocs/api.chat.denoteai.tech
+EnvironmentFile=/home/denoteai-api-chat/credentials/.env
+Environment=GOOGLE_APPLICATION_CREDENTIALS=/home/denoteai-api-chat/credentials/denoteai-firebase-adminsdk-fbsvc-f91a6418cd.json
+ExecStart=/usr/bin/node /home/denoteai-api-chat/htdocs/api.chat.denoteai.tech/index.js
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target 

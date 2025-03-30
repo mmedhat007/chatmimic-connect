@@ -29,6 +29,8 @@ dist-ssr
 .env.*.local
 .env.development
 .env.production
+server/.env
+*.env
 
 # Chatmimic identity assets
 "Chatmimic identity"
