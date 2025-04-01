@@ -3,6 +3,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 const axios = require('axios');
+const logger = require('./utils/logger');
 
 // Firebase Admin initialization should be done in your main server file
 // and passed to this module
@@ -83,7 +84,7 @@ router.post('/exchange-token', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error exchanging Google OAuth token:', error);
+    logger.error('Error exchanging Google OAuth token:', error);
     res.status(500).json({ 
       error: 'Failed to exchange token', 
       message: error.message 
@@ -166,7 +167,7 @@ router.post('/refresh-token', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error refreshing Google OAuth token:', error);
+    logger.error('Error refreshing Google OAuth token:', error);
     res.status(500).json({ 
       error: 'Failed to refresh token', 
       message: error.message 

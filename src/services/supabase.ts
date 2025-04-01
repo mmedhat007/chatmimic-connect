@@ -1,12 +1,8 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import OpenAI from 'openai';
 
 // Supabase configuration
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || '';
-
-// OpenAI configuration
-const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || '';
 
 // Initialize Supabase client
 export const supabase = createClient(supabaseUrl, supabaseKey);
@@ -16,30 +12,31 @@ if (!supabaseUrl || !supabaseKey) {
   console.error('Supabase URL or key is not properly configured');
 }
 
-// Initialize OpenAI client with dangerouslyAllowBrowser set to true
-// Note: In a production environment, embedding generation should be done server-side
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true // Adding this to fix the browser environment error
-});
-
-// Utility to check if OpenAI embeddings are working
+// Function to check if embeddings are available
 export const checkEmbeddingsAvailable = async (): Promise<boolean> => {
-  if (!OPENAI_API_KEY) {
-    console.warn('OpenAI API key is not set');
-    return false;
-  }
-  
   try {
-    // Try to generate a simple embedding to see if it works
-    const testResponse = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: "test",
+    // Try to generate a simple embedding using the proxy endpoint
+    const response = await fetch('/api/proxy/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+      },
+      body: JSON.stringify({
+        text: "test",
+        model: "text-embedding-3-small"
+      })
     });
     
-    return !!testResponse.data[0].embedding;
+    if (!response.ok) {
+      console.warn('Embeddings test failed with status:', response.status);
+      return false;
+    }
+    
+    const result = await response.json();
+    return !!result.data.embedding;
   } catch (error) {
-    console.warn('OpenAI embeddings test failed:', error);
+    console.warn('Embeddings test failed:', error);
     return false;
   }
 };
@@ -354,9 +351,6 @@ export const getUserConfig = async (uid: string): Promise<any> => {
 // Function to create embeddings
 export const createEmbeddings = async (uid: string, content: string, queryName: string = null, additionalMetadata = {}): Promise<boolean> => {
   try {
-    // Check if the OpenAI API key is set
-    const openaiApiKey = import.meta.env.VITE_OPENAI_API_KEY;
-    
     // Prepare metadata - include queryName and user_id in metadata
     const metadata: Record<string, any> = {
       ...additionalMetadata,
@@ -368,35 +362,26 @@ export const createEmbeddings = async (uid: string, content: string, queryName: 
       metadata.query_name = queryName;
     }
     
-    if (!openaiApiKey) {
-      console.warn('OpenAI API key not set, skipping embedding generation');
+    try {
+      // Use the server proxy endpoint instead of direct OpenAI API call
+      const response = await fetch('/api/proxy/embeddings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+        },
+        body: JSON.stringify({
+          text: content,
+          model: "text-embedding-3-small"
+        })
+      });
       
-      // Still insert the record, but without embeddings
-      const { error } = await supabase
-        .from('user_embeddings')
-        .insert({
-          user_id: uid,
-          content: content,
-          metadata: metadata,
-          embedding: null
-        });
-        
-      if (error) {
-        console.error('Error saving record without embedding:', error);
-        return false;
+      if (!response.ok) {
+        throw new Error(`Server responded with status: ${response.status}`);
       }
       
-      return true;
-    }
-
-    try {
-      // Generate embeddings using OpenAI
-      const embeddingResponse = await openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: content,
-      });
-
-      const embedding = embeddingResponse.data[0].embedding;
+      const result = await response.json();
+      const embedding = result.data.embedding;
 
       // Store the embedding in Supabase
       const { error } = await supabase
@@ -415,7 +400,21 @@ export const createEmbeddings = async (uid: string, content: string, queryName: 
 
       return true;
     } catch (embeddingError) {
-      console.error('Error generating embedding with OpenAI:', embeddingError);
+      console.error('Error generating embedding with proxy API:', embeddingError);
+      // Store the content without embeddings as fallback
+      const { error } = await supabase
+        .from('user_embeddings')
+        .insert({
+          user_id: uid,
+          content: content,
+          metadata: metadata,
+          embedding: null
+        });
+        
+      if (error) {
+        console.error('Error saving record without embedding:', error);
+      }
+      
       // Return true anyway to not block the user's flow when embeddings fail
       return true;
     }

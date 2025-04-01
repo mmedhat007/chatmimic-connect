@@ -80,6 +80,53 @@ if (!userUID) {
 
 **RULE**: Validate user inputs and data from external sources before processing.
 
+### 4. Console Statements in Production
+
+**RULE**: Never include console.log statements in production code.
+
+All `console.log`, `console.info`, and similar debugging statements should be removed for production builds. Use the following approaches:
+
+**For Frontend**:
+- Use the `vite-plugin-remove-console` plugin configured in `vite.config.ts`
+- For any necessary debugging in production, use `console.error` for critical errors only
+
+**For Backend**:
+- Always use the `logger` utility from `server/utils/logger.js` instead of direct console methods
+- Logger will automatically suppress non-error output in production mode
+
+**Example**:
+```javascript
+// Bad - direct console usage
+console.log('Processing message:', message);
+
+// Good - using logger utility
+const logger = require('./utils/logger');
+logger.log('Processing message:', message);
+```
+
+### 5. OAuth Implementation
+
+**RULE**: Always implement OAuth flows with proper state preservation and authentication resilience.
+
+**Requirements**:
+- Include a state parameter with user context in OAuth requests
+- Implement retry mechanisms for authentication state restoration
+- Exchange tokens server-side rather than client-side
+- Encrypt sensitive tokens before storage
+- Never store client secrets in frontend code
+
+**Example**:
+```typescript
+// Creating state parameter
+const stateParam = btoa(JSON.stringify({
+  uid: userUID,
+  timestamp: Date.now()
+}));
+
+// Use in authorization URL
+const authUrl = `https://service.com/oauth?client_id=${clientId}&state=${encodeURIComponent(stateParam)}`;
+```
+
 ## Documentation
 
 ### 1. Update Documentation with Changes
@@ -89,6 +136,7 @@ if (!userUID) {
 - Update `db_structure.md` when changing database structures
 - Update `project_specs.md` when adding new features or making major changes
 - Update `user_flow.md` when changing user interactions or flows
+- Update `google_sheets_integration.md` when modifying the Google Sheets functionality
 - Update any other relevant documentation
 
 ### 2. Code Comments
@@ -115,6 +163,11 @@ if (!userUID) {
 - Store API keys in `.env` file
 - Access via `import.meta.env.VARIABLE_NAME` (for Vite projects)
 - Never commit `.env` files to the repository
+- Move sensitive token exchange operations to the backend
+
+**Server-side credentials**:
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` must be in server-side environment
+- `TOKEN_ENCRYPTION_KEY` should be a 32-byte random hex string generated specifically for the deployment
 
 ## UI/UX Guidelines
 
@@ -126,11 +179,58 @@ if (!userUID) {
 
 **RULE**: Always provide loading indicators for asynchronous operations.
 
+### 3. Authentication Error Handling
+
+**RULE**: Implement robust error handling for authentication flows:
+
+- Show clear error messages to users
+- Provide retry options when authentication fails
+- Implement appropriate timeouts and fallbacks
+- Preserve authentication state across redirects when possible
+
 ## Version Control
 
 ### 1. Commit Messages
 
 **RULE**: Write clear, descriptive commit messages that explain what changes were made and why.
+
+## Security Guidelines
+
+### 1. Backend Proxy for API Calls
+
+**RULE**: Use backend proxy endpoints for any API calls requiring client secrets or API keys.
+
+```javascript
+// Bad - direct API call with secrets in frontend
+const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
+  client_id: GOOGLE_CLIENT_ID,
+  client_secret: GOOGLE_CLIENT_SECRET, // Never expose this in frontend
+  code,
+  redirect_uri: redirectUri,
+  grant_type: 'authorization_code'
+});
+
+// Good - using backend proxy
+const response = await fetch('/api/google-oauth/exchange-token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${idToken}` // User's firebase token
+  },
+  body: JSON.stringify({
+    code,
+    redirectUri
+  })
+});
+```
+
+### 2. Authentication State Management
+
+**RULE**: Always handle authentication state carefully during OAuth redirects.
+
+- Use state parameters to maintain context
+- Implement retry mechanisms when auth state might be lost
+- Store session information securely
 
 ---
 

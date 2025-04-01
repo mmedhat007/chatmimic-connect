@@ -6,10 +6,15 @@ After=network.target
 Type=simple
 User=denoteai-api-chat
 WorkingDirectory=/home/denoteai-api-chat/htdocs/api.chat.denoteai.tech
-EnvironmentFile=/home/denoteai-api-chat/credentials/.env
+Environment=NODE_ENV=production
 Environment=GOOGLE_APPLICATION_CREDENTIALS=/home/denoteai-api-chat/credentials/denoteai-firebase-adminsdk-fbsvc-f91a6418cd.json
+EnvironmentFile=/home/denoteai-api-chat/credentials/.env
 ExecStart=/usr/bin/node /home/denoteai-api-chat/htdocs/api.chat.denoteai.tech/index.js
-Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=chatmimic-server
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target 
