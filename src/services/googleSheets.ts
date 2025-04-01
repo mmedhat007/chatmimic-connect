@@ -134,12 +134,25 @@ export const authorizeGoogleSheets = async () => {
   const GOOGLE_REDIRECT_URI = `${window.location.origin}/google-callback`;
   const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
   
+  // Get current user ID for state parameter
+  const userUID = getCurrentUser();
+  if (!userUID) {
+    throw new Error('No user logged in');
+  }
+  
+  // Create a state parameter to help maintain context
+  const stateParam = btoa(JSON.stringify({
+    uid: userUID,
+    timestamp: Date.now()
+  }));
+  
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
     `client_id=${GOOGLE_CLIENT_ID}` +
     `&redirect_uri=${encodeURIComponent(GOOGLE_REDIRECT_URI)}` +
     `&response_type=code` +
     `&scope=${encodeURIComponent(GOOGLE_SCOPES)}` +
     `&access_type=offline` +
+    `&state=${encodeURIComponent(stateParam)}` +
     `&prompt=consent`;
   
   window.location.href = authUrl;

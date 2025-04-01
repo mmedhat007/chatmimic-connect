@@ -4,11 +4,22 @@
 
 **URL**: https://lovable.dev/projects/cc292d52-f917-488b-b1ce-98dfd75b5b1a
 
+## Documentation
+
+All project documentation has been consolidated into the `project_documentation` folder with a clear, organized structure. Please refer to [Project Documentation](project_documentation/README.md) for comprehensive information about:
+
+- Project overview and user flow
+- Technical architecture and database structure 
+- API reference and backend security
+- Integrations (Google Sheets, N8N, Vector Store)
+- Deployment and production setup
+- Troubleshooting and maintenance
+
 ## Supabase Integration
 
 This project uses Supabase for storing user configurations and embeddings. Follow these steps to set up the Supabase integration:
 
-1. Check the [Supabase Setup Guide](docs/SUPABASE_SETUP.md) for detailed instructions.
+1. Check the [Vector Store Integration Guide](project_documentation/5-integrations/vector_store_integration.md) for detailed instructions.
 2. Run the SQL scripts in the `sql/migrations` directory to set up the necessary tables and functions.
 3. Make sure your environment variables are set correctly in `.env` or `.env.local`.
 
@@ -22,10 +33,7 @@ VITE_OPENAI_API_KEY=your_openai_api_key
 
 ### Database Tables
 
-The application uses the following Supabase tables:
-
-1. `user_configs` - Stores user configuration data for the WhatsApp AI agent
-2. `user_embeddings` - Stores embeddings for semantic search
+The application uses a dual-database approach as described in the [Database Structure](project_documentation/2-architecture/database_structure.md) document.
 
 ### Vector Embeddings
 
@@ -98,17 +106,23 @@ npm run dev
 
 ## What technologies are used for this project?
 
-This project is built with .
+This project is built with:
 
 - Vite
 - TypeScript
 - React
 - shadcn-ui
 - Tailwind CSS
+- Firebase (Authentication, Firestore)
+- Supabase (Vector Database)
+- OpenAI API
+- WhatsApp Business API
 
 ## How can I deploy this project?
 
 Simply open [Lovable](https://lovable.dev/projects/cc292d52-f917-488b-b1ce-98dfd75b5b1a) and click on Share -> Publish.
+
+For detailed deployment instructions, see the [Production Setup Guide](project_documentation/6-deployment/production_setup.md).
 
 ## I want to use a custom domain - is that possible?
 

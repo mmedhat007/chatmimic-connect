@@ -9,11 +9,6 @@ import { toast } from 'react-hot-toast';
 import { supabase } from '../services/supabase';
 import TestResultsDisplay from '../components/TestResultsDisplay';
 
-// OpenAI API configuration
-// In a production environment, this should be stored securely and called from a backend
-const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || '';
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
-
 interface Message {
   id: string;
   text: string;
@@ -109,37 +104,46 @@ interface BusinessInfo {
 // Function to generate industry-specific structure
 const generateIndustryStructure = async (industry: string): Promise<any> => {
   try {
-    const response = await axios.post(
-      OPENAI_API_URL,
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI expert in business operations. Generate a minimal set of essential information points for a WhatsApp AI agent. Focus only on the most important aspects that customers typically ask about.`
-          },
-          {
-            role: "user",
-            content: `Generate a simple JSON structure for a ${industry} business with only the most essential fields:
-            {
-              "data_fields": { top 3 most important fields only },
-              "customer_queries": [ top 3 most common questions ],
-              "operations": { top 2 key operations },
-              "compliance": [ only if legally required ]
-            }`
-          }
-        ],
-        temperature: 0.7
+    // Use the proxy endpoint instead of directly calling OpenAI
+    const response = await fetch('/api/proxy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
       },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_API_KEY}`
+      body: JSON.stringify({
+        service: 'openai',
+        endpoint: 'https://api.openai.com/v1/chat/completions',
+        method: 'POST',
+        data: {
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: `You are an AI expert in business operations. Generate a minimal set of essential information points for a WhatsApp AI agent. Focus only on the most important aspects that customers typically ask about.`
+            },
+            {
+              role: "user",
+              content: `Generate a simple JSON structure for a ${industry} business with only the most essential fields:
+              {
+                "data_fields": { top 3 most important fields only },
+                "customer_queries": [ top 3 most common questions ],
+                "operations": { top 2 key operations },
+                "compliance": [ only if legally required ]
+              }`
+            }
+          ],
+          temperature: 0.7
         }
-      }
-    );
+      })
+    });
 
-    return JSON.parse(response.data.choices[0].message.content);
+    if (!response.ok) {
+      throw new Error(`Server responded with status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    return JSON.parse(result.data.choices[0].message.content);
   } catch (error) {
     console.error('Error generating industry structure:', error);
     return null;
@@ -401,16 +405,21 @@ const AgentSetupPage = () => {
 
       // Call OpenAI API for chat completion
       const response = await axios.post(
-        OPENAI_API_URL,
+        '/api/proxy',
         {
-          model: "gpt-4o-mini",
-          messages: updatedHistory,
-          temperature: 0.7
+          service: 'openai',
+          endpoint: 'https://api.openai.com/v1/chat/completions',
+          method: 'POST',
+          data: {
+            model: "gpt-4o-mini",
+            messages: updatedHistory,
+            temperature: 0.7
+          }
         },
         {
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${OPENAI_API_KEY}`
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
           }
         }
       );
