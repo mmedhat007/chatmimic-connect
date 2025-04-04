@@ -19,7 +19,7 @@ const proxyRequestValidators = [
   body('service')
     .notEmpty().withMessage('Service is required')
     .isString().withMessage('Service must be a string')
-    .isIn(['groq', 'supabase', 'openai']).withMessage('Service must be one of: groq, supabase, openai')
+    .isIn(['groq', 'supabase', 'openai', 'google']).withMessage('Service must be one of: groq, supabase, openai, google')
     .trim(),
   
   // Method is optional but should be a valid HTTP method if provided
@@ -33,10 +33,10 @@ const proxyRequestValidators = [
   body('headers')
     .optional()
     .isObject().withMessage('Headers must be an object')
-    // Don't allow Authorization header to be sent from client
-    .custom((headers) => {
-      if (headers && (headers.Authorization || headers.authorization)) {
-        throw new Error('Authorization header is not allowed');
+    // Now allow Authorization header for Google API calls
+    .custom((headers, { req }) => {
+      if (headers && (headers.Authorization || headers.authorization) && req.body.service !== 'google') {
+        throw new Error('Authorization header is not allowed except for Google API calls');
       }
       return true;
     }),

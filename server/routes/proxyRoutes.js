@@ -12,9 +12,10 @@ const {
   extractDataValidators,
   matchDocumentsValidators
 } = require('../utils/validators/proxyValidators');
-const { makeRequest } = require('../services/proxyService');
+const proxyService = require('../services/proxyService');
 const { generateEmbeddings, extractDataWithGroq } = require('../services/aiService');
 const { saveEmbedding, matchDocuments } = require('../services/supabaseService');
+const googleService = require('../services/googleService');
 
 const router = express.Router();
 
@@ -38,13 +39,14 @@ router.post('/proxy',
         method: method || 'GET'
       });
       
-      const result = await makeRequest({
+      const result = await proxyService.makeRequest({
         url: endpoint,
         method: method || 'GET',
         data,
         headers,
         params,
-        service
+        service,
+        userId: req.user.uid
       });
       
       const responseTime = Date.now() - startTime;
@@ -89,19 +91,23 @@ router.post('/embeddings',
     const startTime = Date.now();
     
     try {
-      const { text, model = 'text-embedding-3-small', save = false, type, metadata } = req.body;
+      const { text, model, save, type, metadata } = req.body;
       
-      logger.info('Embeddings request', {
-        userId: req.user.uid,
-        textLength: text.length,
-        model
-      });
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: 'Text is required and must be a string' });
+      }
       
-      const embedding = await generateEmbeddings(text);
+      // Log request for monitoring (excluding text content for privacy)
+      logger.info(`Embeddings request received - userId: ${req.user.uid}, textLength: ${text.length}`);
       
-      // Optionally save the embedding to the database
-      if (save && type) {
-        await saveEmbedding(req.user.uid, text, embedding, type, metadata || {});
+      // Generate embeddings via AI service
+      const embeddings = await generateEmbeddings(text, model);
+      
+      // Save embeddings to database if requested
+      if (save && embeddings) {
+        await saveEmbedding(req.user.uid, text, embeddings, type || 'text', metadata || {});
+        
+        logger.info(`Embeddings saved for userId: ${req.user.uid}`);
       }
       
       const responseTime = Date.now() - startTime;
@@ -113,9 +119,9 @@ router.post('/embeddings',
       res.json({
         status: 'success',
         data: {
-          embedding,
-          model: 'text-embedding-3-small',
-          dimensions: embedding.length
+          embedding: embeddings,
+          model: model,
+          dimensions: embeddings.length
         },
         meta: {
           responseTime
@@ -250,5 +256,66 @@ router.post('/match-documents',
     }
   }
 );
+
+/**
+ * Route handler for proxy requests to external services
+ * Requires proper authorization
+ */
+router.post('/:service/*', requireAuth, async (req, res) => {
+  try {
+    const { service } = req.params;
+    const endpoint = req.path.replace(`/proxy/${service}`, '');
+    const { method = 'GET', data, headers = {}, params } = req.body;
+    
+    // Validate the service
+    const validServices = ['groq', 'openai', 'supabase', 'google', 'sheets'];
+    if (!validServices.includes(service)) {
+      return res.status(400).json({ 
+        error: `Invalid service: ${service}. Valid services are: ${validServices.join(', ')}` 
+      });
+    }
+    
+    // Add user ID to request headers for tracking
+    headers['X-User-Id'] = req.user.uid;
+    
+    // For Google APIs, forward the user's access token
+    if (service === 'google' || service === 'sheets') {
+      // Check if Authorization header was already provided from client
+      if (!headers.Authorization && !headers.authorization) {
+        // Get user's Google credentials from Firestore
+        const googleCreds = await googleService.getCredentialsForUser(req.user.uid);
+        if (!googleCreds || !googleCreds.access_token) {
+          return res.status(401).json({ error: 'Google API access token not available' });
+        }
+        
+        // Add authorization header with proper Bearer format
+        headers.Authorization = `Bearer ${googleCreds.access_token}`;
+      }
+    }
+    
+    // Make the request via the proxy service
+    const response = await proxyService.makeRequest({
+      url: endpoint,
+      method,
+      data,
+      headers,
+      params,
+      service,
+      userId: req.user.uid
+    });
+    
+    // Return the proxied response
+    res.json(response);
+  } catch (error) {
+    logger.error(`Proxy error for ${req.path}: ${error.message}`, error);
+    
+    // Return appropriate error status code
+    const statusCode = error.status || 500;
+    res.status(statusCode).json({ 
+      error: error.message || 'Proxy request failed',
+      details: error.details || null
+    });
+  }
+});
 
 module.exports = router; 

@@ -8,6 +8,7 @@ const path = require('path');
 const googleOAuthRoutes = require('./googleOAuth');
 const proxyRoutes = require('./routes/proxyRoutes');
 const configRoutes = require('./routes/configRoutes');
+const googleSheetsRoutes = require('./routes/googleSheets');
 const logger = require('./utils/logger');
 
 // Initialize Firebase Admin
@@ -16,8 +17,10 @@ try {
     credential: admin.credential.applicationDefault(),
     databaseURL: process.env.FIREBASE_DATABASE_URL,
   });
+  logger.info('Firebase Admin SDK initialized successfully');
   console.log('Firebase Admin SDK initialized successfully');
 } catch (error) {
+  logger.error('Error initializing Firebase Admin SDK:', error);
   console.error('Error initializing Firebase Admin SDK:', error);
   // Don't crash the server, allow it to start even if Firebase fails
   // This allows you to debug other aspects of the server
@@ -27,59 +30,63 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(express.json({ limit: '10mb' }));  // Increased payload limit for embeddings
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// CORS configuration
+const corsOrigins = process.env.CORS_ORIGIN ? 
+  process.env.CORS_ORIGIN.split(',').map(origin => origin.trim()) : 
+  ['http://localhost:5173', 'https://chat.denoteai.tech'];
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? 'https://chat.denoteai.tech'
-    : 'http://localhost:8080',
-  credentials: true
+  origin: corsOrigins,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  maxAge: 86400 // 24 hours
 }));
 
-// Security middleware
-app.use(helmet());
+// Enhanced security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      connectSrc: ["'self'", ...corsOrigins],
+      frameSrc: ["'self'"],
+      childSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+      fontSrc: ["'self'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false, // Allow embedding of resources
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 
-// Content Security Policy middleware - without using express-csp-header
+// Logging middleware
 app.use((req, res, next) => {
-  res.setHeader('Content-Security-Policy', 
-    "default-src 'self'; " +
-    "script-src 'self' https://apis.google.com; " +
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-    "img-src 'self' data: https://www.gstatic.com; " +
-    "font-src 'self' https://fonts.gstatic.com; " +
-    "connect-src 'self' https://api.groq.com https://api.openai.com https://*.supabase.co https://oauth2.googleapis.com https://sheets.googleapis.com https://www.googleapis.com https://*.firebaseio.com https://*.firebase.googleapis.com; " +
-    "frame-src 'self' https://accounts.google.com; " +
-    "object-src 'none'; " +
-    "base-uri 'self'; " +
-    "form-action 'self'; " +
-    "frame-ancestors 'self'; " +
-    "upgrade-insecure-requests"
-  );
-  next();
-});
-
-// Request logging middleware
-app.use((req, res, next) => {
-  const startTime = Date.now();
-  
-  // Log when request starts
-  logger.info(`${req.method} ${req.originalUrl}`, { 
+  logger.info(`${req.method} ${req.path}`, {
     ip: req.ip,
-    userAgent: req.get('User-Agent')
+    userAgent: req.headers['user-agent'],
+    query: req.query
   });
   
-  // Log when response finishes
-  res.on('finish', () => {
-    const duration = Date.now() - startTime;
-    logger.info(`${req.method} ${req.originalUrl} completed`, {
-      statusCode: res.statusCode,
-      duration: `${duration}ms`
+  // Log response
+  const originalSend = res.send;
+  res.send = function(data) {
+    logger.debug(`Response ${res.statusCode}`, {
+      path: req.path,
+      method: req.method,
+      status: res.statusCode
     });
-  });
+    originalSend.call(this, data);
+  };
   
   next();
 });
 
-// Middleware to verify Firebase Auth token
+// Authentication middleware
 app.use(async (req, res, next) => {
   const authHeader = req.headers.authorization;
   
@@ -94,17 +101,15 @@ app.use(async (req, res, next) => {
     req.user = decodedToken;
     next();
   } catch (error) {
+    // Just log the error but don't block the request
+    // This allows unauthenticated requests to pass through
+    // Individual routes will enforce authentication as needed
     logger.error('Error verifying Firebase token:', error);
-    res.status(403).json({ error: 'Unauthorized' });
+    next();
   }
 });
 
-// API Routes
-app.use('/api/google-oauth', googleOAuthRoutes);
-app.use('/api/proxy', proxyRoutes);
-app.use('/api/config', configRoutes);
-
-// Health check endpoint
+// Health check endpoint (no auth required)
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -114,6 +119,32 @@ app.get('/api/health', (req, res) => {
     env: process.env.NODE_ENV
   });
 });
+
+// For direct health check without /api prefix
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'Server is running',
+    version: process.env.npm_package_version || '1.0.0',
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV
+  });
+});
+
+// API Routes for both direct access and through NGINX
+// Support both /api/* path formats and direct /* paths
+app.use('/api/google-oauth', googleOAuthRoutes);
+app.use('/google-oauth', googleOAuthRoutes);
+
+app.use('/api/proxy', proxyRoutes);
+app.use('/proxy', proxyRoutes);
+
+app.use('/api/config', configRoutes);
+app.use('/config', configRoutes);
+
+// New Google Sheets routes
+app.use('/api/google-sheets', googleSheetsRoutes);
+app.use('/google-sheets', googleSheetsRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
@@ -138,7 +169,8 @@ app.use((err, req, res, next) => {
 
 // Start the server
 app.listen(PORT, () => {
-  logger.log(`Server running on port ${PORT}`);
+  logger.info(`Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
 
 // Global error handler

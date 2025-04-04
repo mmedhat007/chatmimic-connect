@@ -5,6 +5,7 @@
 
 const axios = require('axios');
 const logger = require('../utils/logger');
+const googleService = require('./googleService');
 
 // Configure axios defaults
 const apiClient = axios.create({
@@ -77,26 +78,57 @@ apiClient.interceptors.response.use(
  * @param {Object} options.headers - Additional headers
  * @param {Object} options.params - URL parameters
  * @param {string} options.service - Service name for authentication (e.g., 'groq', 'supabase', 'openai')
+ * @param {string} options.userId - User ID for requests requiring user context
  * @returns {Promise<Object>} Response data
  */
-const makeRequest = async ({ url, method = 'GET', data = {}, headers = {}, params = {}, service }) => {
+const makeRequest = async ({ url, method = 'GET', data = {}, headers = {}, params = {}, service, userId }) => {
   try {
     // Add service-specific authentication
-    const authHeaders = await getAuthHeaders(service);
+    const authHeaders = await getAuthHeaders(service, headers, userId);
+    
+    // Create a clean headers object with all normalized headers
+    const normalizedHeaders = normalizeHeaders({...headers, ...authHeaders});
     
     const response = await apiClient({
       url,
       method,
       data,
       params,
-      headers: {
-        ...headers,
-        ...authHeaders,
-      },
+      headers: normalizedHeaders,
     });
     
     return response.data;
   } catch (error) {
+    // Specific handling for Google token errors
+    if (service === 'google' || service === 'sheets') {
+      if (error.response?.status === 401 && userId) {
+        logger.warn(`Google API returned 401 for user ${userId}, attempting token refresh`);
+        try {
+          // Try to refresh token and retry the request
+          const credentials = await googleService.getValidCredentials(userId);
+          
+          // Update headers with new token
+          headers.Authorization = `Bearer ${credentials.access_token}`;
+          
+          // Retry the request with refreshed token
+          const normalizedHeaders = normalizeHeaders({...headers});
+          
+          const retryResponse = await apiClient({
+            url,
+            method,
+            data,
+            params,
+            headers: normalizedHeaders,
+          });
+          
+          return retryResponse.data;
+        } catch (refreshError) {
+          logger.error(`Failed to refresh token for user ${userId}:`, refreshError);
+          throw new Error(`Failed to refresh token: ${refreshError.message}`);
+        }
+      }
+    }
+    
     // Transform error into a standardized format
     const formattedError = formatError(error, service);
     throw formattedError;
@@ -104,24 +136,71 @@ const makeRequest = async ({ url, method = 'GET', data = {}, headers = {}, param
 };
 
 /**
+ * Normalize headers to ensure consistent casing and formatting
+ * @param {Object} headers - Headers object
+ * @returns {Object} Normalized headers
+ */
+const normalizeHeaders = (headers) => {
+  const normalized = {};
+  
+  // Convert all header names to their canonical form
+  Object.keys(headers).forEach(key => {
+    const lowerKey = key.toLowerCase();
+    
+    // Handle authorization specially to ensure Bearer prefix
+    if (lowerKey === 'authorization') {
+      const value = headers[key];
+      if (value && typeof value === 'string' && !value.startsWith('Bearer ')) {
+        normalized['Authorization'] = `Bearer ${value}`;
+      } else {
+        normalized['Authorization'] = value;
+      }
+    } else {
+      // For other headers, use original casing but deduplicate
+      normalized[key] = headers[key];
+    }
+  });
+  
+  return normalized;
+};
+
+/**
  * Get authentication headers for different services
  * @param {string} service - Service name
- * @returns {Object} Headers with authentication
+ * @param {Object} headers - Headers passed in from the request
+ * @param {string} userId - User ID for requests requiring user context
+ * @returns {Promise<Object>} Headers with authentication
  */
-const getAuthHeaders = async (service) => {
-  const headers = {};
+const getAuthHeaders = async (service, headers = {}, userId) => {
+  const authHeaders = {};
   
   switch (service) {
     case 'groq':
-      headers['Authorization'] = `Bearer ${process.env.GROQ_API_KEY}`;
+      authHeaders['Authorization'] = `Bearer ${process.env.GROQ_API_KEY}`;
       break;
     
     case 'openai':
-      headers['Authorization'] = `Bearer ${process.env.OPENAI_API_KEY}`;
+      authHeaders['Authorization'] = `Bearer ${process.env.OPENAI_API_KEY}`;
       break;
       
     case 'supabase':
-      headers['apiKey'] = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      authHeaders['apiKey'] = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      break;
+
+    case 'google':
+    case 'sheets':
+      // For Google API calls, get fresh credentials if not provided
+      if (!headers.Authorization && !headers.authorization && userId) {
+        try {
+          const credentials = await googleService.getValidCredentials(userId);
+          if (credentials && credentials.access_token) {
+            authHeaders.Authorization = `Bearer ${credentials.access_token}`;
+          }
+        } catch (error) {
+          logger.error(`Error getting Google credentials for user ${userId}:`, error);
+          throw new Error(`Failed to get Google credentials: ${error.message}`);
+        }
+      }
       break;
       
     // Add additional services as needed
@@ -131,7 +210,7 @@ const getAuthHeaders = async (service) => {
       break;
   }
   
-  return headers;
+  return authHeaders;
 };
 
 /**
@@ -158,6 +237,8 @@ const formatError = (error, service) => {
     formattedError.message = details.error.message || message;
   } else if (service === 'supabase' && details.error) {
     formattedError.message = details.error || message;
+  } else if ((service === 'google' || service === 'sheets') && details.error) {
+    formattedError.message = details.error.message || message;
   }
   
   return formattedError;

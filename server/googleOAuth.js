@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const admin = require('firebase-admin');
 const axios = require('axios');
 const logger = require('./utils/logger');
+const { requireAuth } = require('./middleware/auth');
 
 // Firebase Admin initialization should be done in your main server file
 // and passed to this module
@@ -22,14 +23,33 @@ function encryptData(data, secret) {
   };
 }
 
-// Google OAuth token exchange endpoint
+// Google OAuth token exchange endpoint - no auth required for callback
 router.post('/exchange-token', async (req, res) => {
   try {
-    const { code, redirectUri } = req.body;
-    const { uid } = req.user; // Assuming you have Firebase Auth middleware that adds user to req
+    const { code, redirectUri, state } = req.body;
     
-    if (!code || !redirectUri || !uid) {
+    if (!code || !redirectUri) {
       return res.status(400).json({ error: 'Missing required parameters' });
+    }
+    
+    // Parse the state parameter to get user UID
+    let uid;
+    try {
+      if (state) {
+        const decodedState = JSON.parse(atob(state));
+        uid = decodedState.uid;
+      }
+    } catch (err) {
+      logger.error('Error parsing state parameter:', err);
+    }
+    
+    // If no UID from state, try to get from auth header
+    if (!uid && req.user) {
+      uid = req.user.uid;
+    }
+    
+    if (!uid) {
+      return res.status(400).json({ error: 'User ID not found in request' });
     }
     
     // Server-side environment variables
@@ -93,7 +113,8 @@ router.post('/exchange-token', async (req, res) => {
 });
 
 // Route to refresh an expired token
-router.post('/refresh-token', async (req, res) => {
+// This one requires authentication
+router.post('/refresh-token', requireAuth, async (req, res) => {
   try {
     const { uid } = req.user; // From Firebase Auth middleware
     
@@ -174,5 +195,10 @@ router.post('/refresh-token', async (req, res) => {
     });
   }
 });
+
+// Helper function to decode base64 strings (for state parameter)
+function atob(str) {
+  return Buffer.from(str, 'base64').toString('utf-8');
+}
 
 module.exports = router; 
