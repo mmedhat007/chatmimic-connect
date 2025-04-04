@@ -1,0 +1,30 @@
+{
+  "timestamp": "2025-04-04T17:59:43.040Z",
+  "config": {
+    "baseUrl": "http://localhost:3000",
+    "authToken": "",
+    "testEmbeddings": false,
+    "testGoogleSheets": false,
+    "testProxyEndpoint": true,
+    "verbose": false
+  },
+  "results": {
+    "passed": 1,
+    "failed": 0,
+    "skipped": 2,
+    "tests": [
+      {
+        "name": "Health endpoint responded successfully",
+        "status": "passed"
+      },
+      {
+        "name": "Skipping embeddings tests",
+        "status": "skipped"
+      },
+      {
+        "name": "Skipping Google Sheets tests",
+        "status": "skipped"
+      }
+    ]
+  }
+}

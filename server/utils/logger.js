@@ -132,11 +132,48 @@ logger.logResponse = (req, res, responseTime, msg = 'API Response') => {
 
 // Add error logging helper with sanitization
 logger.logError = (err, req = null, msg = 'Server Error') => {
+  if (!err) {
+    logger.error(`${msg} (no error details provided)`, {
+      emptyError: true,
+      timestamp: new Date().toISOString()
+    });
+    return;
+  }
+
+  // Extract error details safely
   const errorInfo = {
-    message: err.message,
-    stack: err.stack,
-    code: err.code,
+    message: err.message || 'No error message',
+    name: err.name || 'Error',
+    code: err.code || 'UNKNOWN',
   };
+  
+  // Only include stack in development or if explicitly enabled in production
+  if (process.env.NODE_ENV !== 'production' || process.env.LOG_STACKS === 'true') {
+    errorInfo.stack = err.stack;
+  }
+
+  // Include http status code if available
+  if (err.statusCode || err.status) {
+    errorInfo.statusCode = err.statusCode || err.status;
+  }
+
+  // Include error response details if available
+  if (err.response) {
+    errorInfo.responseStatus = err.response.status;
+    // Only include limited response data to avoid massive logs
+    if (err.response.data) {
+      if (typeof err.response.data === 'string') {
+        // Truncate long string responses
+        errorInfo.responseData = err.response.data.substring(0, 200) + 
+          (err.response.data.length > 200 ? '... (truncated)' : '');
+      } else {
+        // For object/JSON responses, stringify but truncate
+        const dataStr = JSON.stringify(err.response.data);
+        errorInfo.responseData = dataStr.substring(0, 500) + 
+          (dataStr.length > 500 ? '... (truncated)' : '');
+      }
+    }
+  }
 
   // Add request details if available, but sanitize sensitive information
   if (req) {
@@ -144,10 +181,29 @@ logger.logError = (err, req = null, msg = 'Server Error') => {
     errorInfo.path = req.path;
     errorInfo.userId = req.user?.uid || 'unauthenticated';
     
+    // Include query parameters without sensitive data
+    if (Object.keys(req.query || {}).length > 0) {
+      // Filter out potential sensitive data from query
+      const safeQuery = { ...req.query };
+      ['token', 'key', 'secret', 'password', 'auth'].forEach(key => {
+        if (safeQuery[key]) safeQuery[key] = '[REDACTED]';
+      });
+      errorInfo.query = safeQuery;
+    }
+    
     // Don't log potentially sensitive request body data in errors
     // Just log that there was a body, or include safe fields if needed
     if (Object.keys(req.body || {}).length > 0) {
       errorInfo.hasRequestBody = true;
+      
+      // For specific endpoints, we may want to include safe fields
+      if (req.path.includes('/embeddings')) {
+        errorInfo.textLength = req.body.text ? req.body.text.length : 0;
+        errorInfo.model = req.body.model;
+      } else if (req.path.includes('/extract-data')) {
+        errorInfo.messageLength = req.body.message ? req.body.message.length : 0;
+        errorInfo.fieldCount = req.body.fields ? req.body.fields.length : 0;
+      }
     }
   }
 

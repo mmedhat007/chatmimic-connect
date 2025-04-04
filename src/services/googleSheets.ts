@@ -3,6 +3,7 @@ import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { proxyRequest } from '../utils/api';
 import { apiRequest } from '../utils/api';
+import { auth } from './firebase';
 
 // Types
 export interface SheetColumn {
@@ -27,8 +28,11 @@ export interface SheetConfig {
 }
 
 // Helper function to create Auth header with Bearer prefix
-const createAuthHeader = (token: string): string => {
-  return token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+const createAuthHeader = (token: string | null | undefined): string => {
+  if (!token) {
+    return '';
+  }
+  return typeof token === 'string' && token.startsWith('Bearer ') ? token : `Bearer ${token}`;
 };
 
 /**
@@ -117,10 +121,19 @@ export const revokeGoogleAuth = async () => {
   
   try {
     // Use the server endpoint to revoke the token and clean up credentials
-    // Don't use proxy here - use direct API call to google-sheets endpoint
-    await apiRequest('/api/google-sheets/disconnect', {
+    // Ensure correct path format with /api prefix
+    const response = await apiRequest('/api/google-sheets/disconnect', {
       method: 'POST'
     });
+    
+    // Also update the local user document to immediately reflect the change
+    // This ensures the UI shows the correct state without needing to reload
+    if (response && response.status === 'success') {
+      const userRef = doc(db, 'Users', userUID);
+      await updateDoc(userRef, {
+        'credentials.googleSheetsOAuth': null
+      });
+    }
     
     return true;
   } catch (error) {
@@ -133,10 +146,10 @@ export const revokeGoogleAuth = async () => {
  * Get user's Google Sheets
  */
 export const getUserSheets = async () => {
-  const credentials = await getGoogleSheetsCredentials();
-  const { accessToken } = credentials;
-  
   try {
+    const credentials = await getGoogleSheetsCredentials();
+    const { accessToken } = credentials;
+    
     // Build query params for Google Drive API
     const queryParams = new URLSearchParams({
       q: "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
@@ -462,26 +475,54 @@ export const appendSheetRow = async (sheetId: string, data: Record<string, strin
 /**
  * Exchange code for token after Google OAuth callback
  * @param code The authorization code from Google
+ * @param redirectUri The redirect URI from the OAuth flow
  * @param state The state parameter from the OAuth flow
  */
-export const exchangeGoogleAuthCode = async (code: string, state: string) => {
+export async function exchangeGoogleAuthCode(code: string, redirectUri: string, state?: string): Promise<void> {
   try {
-    // Use direct API path instead of proxy for OAuth token exchange
-    const response = await apiRequest('/api/google-oauth/exchange-token', {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      throw new Error("No authenticated user found");
+    }
+
+    const token = await currentUser.getIdToken();
+    
+    // In development, use the full URL with port 3000
+    const baseUrl = process.env.NODE_ENV === 'development' 
+      ? 'http://localhost:3000' 
+      : '';
+    
+    const response = await fetch(`${baseUrl}/api/google-oauth/exchange-token`, {
       method: 'POST',
-      body: JSON.stringify({ 
-        code, 
-        state,
-        redirectUri: `${window.location.origin}/google-callback`
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        code,
+        redirectUri,
+        state
       })
     });
-    
-    return response;
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorData;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch (e) {
+        throw new Error(`Failed to exchange token - server returned: ${errorText}`);
+      }
+      
+      throw new Error(errorData.message || errorData.error || 'Failed to exchange token');
+    }
+
+    return await response.json();
   } catch (error) {
     console.error('Error exchanging Google auth code:', error);
-    throw new Error(`Failed to exchange Google auth code: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw error;
   }
-};
+}
 
 /**
  * Check Google Sheets connection status with the server

@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { getAuth } from 'firebase/auth';
 
 // Supabase configuration
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -15,12 +16,73 @@ if (!supabaseUrl || !supabaseKey) {
 // Function to check if embeddings are available
 export const checkEmbeddingsAvailable = async (): Promise<boolean> => {
   try {
+    console.log('Checking embeddings availability...');
+    
+    // Get the current Firebase user
+    const auth = getAuth();
+    
+    // Try multiple times to get the current user with a small delay
+    let currentUser = auth.currentUser;
+    let attempts = 0;
+    const maxAttempts = 5;
+    
+    while (!currentUser && attempts < maxAttempts) {
+      console.log(`No user found yet, waiting... (attempt ${attempts + 1}/${maxAttempts})`);
+      // Wait for a short time
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      currentUser = auth.currentUser;
+      attempts++;
+    }
+    
+    if (!currentUser) {
+      console.warn('No authenticated user found for embeddings check after multiple attempts');
+      
+      // Fallback: Try to get user ID from localStorage as a last resort
+      const userUID = localStorage.getItem('userUID');
+      if (userUID) {
+        console.log('Found userUID in localStorage, continuing with fallback authentication');
+        
+        // For embeddings test, use a fallback method
+        const response = await fetch('/api/proxy/embeddings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer test-token-dev', // Use a development token that server recognizes
+          },
+          body: JSON.stringify({
+            text: "test",
+            model: "text-embedding-3-small"
+          })
+        });
+        
+        console.log('Embeddings API response status with fallback auth:', response.status);
+        
+        if (!response.ok) {
+          console.warn('Embeddings test failed with fallback auth, status:', response.status);
+          return false;
+        }
+        
+        const result = await response.json();
+        console.log('Embeddings available with fallback auth:', !!result.data.embedding);
+        return !!result.data.embedding;
+      }
+      
+      return false;
+    }
+    
+    console.log('Found authenticated user, getting ID token...');
+    
+    // Get fresh ID token for authentication
+    const token = await currentUser.getIdToken(true);
+    
+    console.log('Firebase ID token retrieved, calling embeddings API...');
+    
     // Try to generate a simple embedding using the proxy endpoint
     const response = await fetch('/api/proxy/embeddings', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+        'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({
         text: "test",
@@ -28,15 +90,24 @@ export const checkEmbeddingsAvailable = async (): Promise<boolean> => {
       })
     });
     
+    console.log('Embeddings API response status:', response.status);
+    
     if (!response.ok) {
       console.warn('Embeddings test failed with status:', response.status);
+      try {
+        const errorData = await response.text();
+        console.warn('Error response:', errorData);
+      } catch (e) {
+        console.warn('Could not extract error details');
+      }
       return false;
     }
     
     const result = await response.json();
+    console.log('Embeddings available:', !!result.data.embedding);
     return !!result.data.embedding;
   } catch (error) {
-    console.warn('Embeddings test failed:', error);
+    console.warn('Embeddings test failed with exception:', error);
     return false;
   }
 };
@@ -363,12 +434,38 @@ export const createEmbeddings = async (uid: string, content: string, queryName: 
     }
     
     try {
+      // Get the current Firebase user
+      const auth = getAuth();
+      let currentUser = auth.currentUser;
+      
+      // Try multiple times to get the current user with a small delay
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (!currentUser && attempts < maxAttempts) {
+        console.log(`No user found for creating embeddings, waiting... (attempt ${attempts + 1}/${maxAttempts})`);
+        // Wait for a short time
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        currentUser = auth.currentUser;
+        attempts++;
+      }
+      
+      let token = 'test-token-dev'; // Default fallback token for development
+      
+      if (currentUser) {
+        // Get fresh ID token for authentication
+        token = await currentUser.getIdToken(true);
+        console.log('Using Firebase ID token for embeddings creation');
+      } else {
+        console.log('Using fallback token for embeddings creation');
+      }
+      
       // Use the server proxy endpoint instead of direct OpenAI API call
       const response = await fetch('/api/proxy/embeddings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           text: content,

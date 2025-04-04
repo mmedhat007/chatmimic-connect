@@ -1,6 +1,7 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { getCurrentUser } from './services/firebase';
 import { Toaster } from 'react-hot-toast';
+import { useEffect } from 'react';
 import Index from './pages/Index';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -33,10 +34,29 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   return <>{children}</>;
 };
 
+// Component to handle route restoration after refresh redirects
+const RouteRestorer = () => {
+  const navigate = useNavigate();
+  
+  useEffect(() => {
+    // Check if we have a saved route from a redirect
+    const lastRoute = localStorage.getItem('lastRoute');
+    if (lastRoute) {
+      // Clear the saved route
+      localStorage.removeItem('lastRoute');
+      // Navigate to the saved route
+      navigate(lastRoute, { replace: true });
+    }
+  }, [navigate]);
+  
+  return null;
+};
+
 const App = () => {
   return (
     <Router>
       <Toaster position="top-right" />
+      <RouteRestorer />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />

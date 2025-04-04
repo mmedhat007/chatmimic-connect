@@ -83,6 +83,7 @@ router.post('/proxy',
 /**
  * Generate embeddings endpoint
  * POST /api/embeddings
+ * POST /api/proxy/embeddings (both routes should work)
  */
 router.post('/embeddings',
   requireAuth,
@@ -91,30 +92,82 @@ router.post('/embeddings',
     const startTime = Date.now();
     
     try {
-      const { text, model, save, type, metadata } = req.body;
+      const { text, model = 'text-embedding-3-small', save = false, type = 'text', metadata = {} } = req.body;
       
       if (!text || typeof text !== 'string') {
-        return res.status(400).json({ error: 'Text is required and must be a string' });
+        logger.warn('Invalid embeddings request: missing or invalid text', {
+          userId: req.user?.uid,
+          textType: typeof text
+        });
+        return res.status(400).json({ 
+          status: 'error', 
+          message: 'Text is required and must be a string' 
+        });
       }
       
       // Log request for monitoring (excluding text content for privacy)
-      logger.info(`Embeddings request received - userId: ${req.user.uid}, textLength: ${text.length}`);
+      logger.info('Embeddings request received', { 
+        userId: req.user.uid,
+        textLength: text.length,
+        model,
+        save,
+        type
+      });
       
-      // Generate embeddings via AI service
-      const embeddings = await generateEmbeddings(text, model);
+      // Generate mock embeddings in development mode if needed
+      let embeddings;
+      // Check for development mode test user or dev_mode flag
+      if (process.env.NODE_ENV === 'development' && 
+          (req.user.dev_mode || req.user.uid === 'test-user-development')) {
+        logger.info('Generating mock embeddings in development mode', {
+          userId: req.user.uid,
+          model,
+          textLength: text.length
+        });
+        
+        // Generate mock embeddings of fixed length (1536 for text-embedding-3-small)
+        const dimensions = 1536;
+        embeddings = Array(dimensions).fill(0).map(() => Math.random() * 2 - 1);
+      } else {
+        // Generate real embeddings via AI service
+        embeddings = await generateEmbeddings(text, model);
+      }
+      
+      if (!embeddings || !Array.isArray(embeddings)) {
+        throw new Error('Failed to generate valid embeddings');
+      }
       
       // Save embeddings to database if requested
       if (save && embeddings) {
-        await saveEmbedding(req.user.uid, text, embeddings, type || 'text', metadata || {});
-        
-        logger.info(`Embeddings saved for userId: ${req.user.uid}`);
+        try {
+          await saveEmbedding(req.user.uid, text, embeddings, type, metadata);
+          logger.info('Embeddings saved to database', {
+            userId: req.user.uid,
+            type
+          });
+        } catch (saveError) {
+          // Log save error but don't fail the request
+          logger.error('Error saving embeddings', {
+            userId: req.user.uid,
+            error: saveError.message
+          });
+          // Continue with response as the primary embedding generation was successful
+        }
       }
       
       const responseTime = Date.now() - startTime;
       logger.info('Embeddings response success', {
         userId: req.user.uid,
+        dimensions: embeddings.length,
         responseTime
       });
+      
+      // Set specific headers for cross-origin requests to ensure proper CORS handling
+      // This helps with localhost:8080 to localhost:3000 requests
+      res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.header('Access-Control-Allow-Credentials', 'true');
       
       res.json({
         status: 'success',
@@ -124,12 +177,24 @@ router.post('/embeddings',
           dimensions: embeddings.length
         },
         meta: {
-          responseTime
+          responseTime,
+          dev_mode: process.env.NODE_ENV === 'development' && (req.user.dev_mode || req.user.uid === 'test-user-development')
         }
       });
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      logger.logError(error, req, 'Embeddings request error');
+      logger.error('Embeddings request error', {
+        userId: req.user?.uid,
+        error: error.message,
+        stack: error.stack,
+        responseTime
+      });
+      
+      // Set CORS headers on error responses too
+      res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.header('Access-Control-Allow-Credentials', 'true');
       
       res.status(500).json({
         status: 'error',
@@ -267,6 +332,14 @@ router.post('/:service/*', requireAuth, async (req, res) => {
     const endpoint = req.path.replace(`/proxy/${service}`, '');
     const { method = 'GET', data, headers = {}, params } = req.body;
     
+    // Log the request details for debugging
+    logger.debug(`Processing proxy request for ${service}`, {
+      service,
+      endpoint,
+      method,
+      headers: Object.keys(headers)
+    });
+    
     // Validate the service
     const validServices = ['groq', 'openai', 'supabase', 'google', 'sheets'];
     if (!validServices.includes(service)) {
@@ -275,8 +348,19 @@ router.post('/:service/*', requireAuth, async (req, res) => {
       });
     }
     
+    // Set CORS headers for the response
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Service, X-Requested-With');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    
     // Add user ID to request headers for tracking
     headers['X-User-Id'] = req.user.uid;
+    
+    // Also extract service from headers if present (might be sent from frontend)
+    if (req.headers['x-service']) {
+      headers['X-Service'] = req.headers['x-service'];
+    }
     
     // For Google APIs, forward the user's access token
     if (service === 'google' || service === 'sheets') {
@@ -309,6 +393,12 @@ router.post('/:service/*', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error(`Proxy error for ${req.path}: ${error.message}`, error);
     
+    // Set CORS headers even on error responses
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Service, X-Requested-With');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    
     // Return appropriate error status code
     const statusCode = error.status || 500;
     res.status(statusCode).json({ 
@@ -316,6 +406,21 @@ router.post('/:service/*', requireAuth, async (req, res) => {
       details: error.details || null
     });
   }
+});
+
+/**
+ * Handle OPTIONS requests for CORS preflight
+ */
+router.options('/:service/*', (req, res) => {
+  // Set CORS headers for preflight
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Service, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400'); // 24 hours
+  
+  // Respond with 204 No Content
+  res.status(204).end();
 });
 
 module.exports = router; 

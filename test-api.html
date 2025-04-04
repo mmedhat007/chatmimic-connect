@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      line-height: 1.6;
+    }
+    .result {
+      background-color: #f5f5f5;
+      padding: 10px;
+      border-radius: 4px;
+      margin-top: 10px;
+      max-height: 300px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+    button {
+      padding: 8px 16px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      margin-right: 10px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+  </style>
+</head>
+<body>
+  <h1>API Test Page</h1>
+  
+  <div>
+    <h2>Test API Endpoints</h2>
+    <button onclick="testHealth()">Test Health</button>
+    <button onclick="testEmbeddings()">Test Embeddings</button>
+    <button onclick="testGoogleSheetsStatus()">Test Google Sheets Status</button>
+    <button onclick="testGoogleDisconnect()">Test Google Disconnect</button>
+    <h3>Results:</h3>
+    <div id="result" class="result">Results will appear here...</div>
+  </div>
+
+  <script>
+    async function testHealth() {
+      const result = document.getElementById('result');
+      result.textContent = 'Testing health endpoint...';
+      try {
+        // First try the direct URL
+        const response = await fetch('http://localhost:3000/api/health');
+        const data = await response.json();
+        result.textContent = `Direct URL Success:\n${JSON.stringify(data, null, 2)}`;
+        
+        // Then try the proxied URL
+        const proxyResponse = await fetch('/api/health');
+        const proxyData = await proxyResponse.json();
+        result.textContent += `\n\nProxied URL Success:\n${JSON.stringify(proxyData, null, 2)}`;
+      } catch (error) {
+        result.textContent = `Error: ${error.message}`;
+      }
+    }
+
+    async function testEmbeddings() {
+      const result = document.getElementById('result');
+      result.textContent = 'Testing embeddings endpoint...';
+      try {
+        // Try the direct URL
+        const response = await fetch('http://localhost:3000/api/proxy/embeddings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer test-token'
+          },
+          body: JSON.stringify({
+            text: 'Hello, this is a test embedding request.',
+            model: 'text-embedding-3-small'
+          })
+        });
+        const data = await response.json();
+        result.textContent = `Direct URL:\n${JSON.stringify(data, null, 2)}`;
+        
+        // Then try the proxied URL
+        const proxyResponse = await fetch('/api/proxy/embeddings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer test-token'
+          },
+          body: JSON.stringify({
+            text: 'Hello, this is a test embedding request.',
+            model: 'text-embedding-3-small'
+          })
+        });
+        const proxyData = await proxyResponse.json();
+        result.textContent += `\n\nProxied URL:\n${JSON.stringify(proxyData, null, 2)}`;
+      } catch (error) {
+        result.textContent = `Error: ${error.message}`;
+      }
+    }
+
+    async function testGoogleSheetsStatus() {
+      const result = document.getElementById('result');
+      result.textContent = 'Testing Google Sheets status endpoint...';
+      try {
+        // First try the direct URL
+        const response = await fetch('http://localhost:3000/api/google-sheets/status', {
+          headers: {
+            'Authorization': 'Bearer test-token'
+          }
+        });
+        const data = await response.json();
+        result.textContent = `Direct URL:\n${JSON.stringify(data, null, 2)}`;
+        
+        // Then try the proxied URL
+        const proxyResponse = await fetch('/api/google-sheets/status', {
+          headers: {
+            'Authorization': 'Bearer test-token'
+          }
+        });
+        const proxyData = await proxyResponse.json();
+        result.textContent += `\n\nProxied URL:\n${JSON.stringify(proxyData, null, 2)}`;
+      } catch (error) {
+        result.textContent = `Error: ${error.message}`;
+      }
+    }
+
+    async function testGoogleDisconnect() {
+      const result = document.getElementById('result');
+      result.textContent = 'Testing Google Sheets disconnect endpoint...';
+      try {
+        // First try the direct URL
+        const response = await fetch('http://localhost:3000/api/google-sheets/disconnect', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer test-token'
+          }
+        });
+        const data = await response.json();
+        result.textContent = `Direct URL:\n${JSON.stringify(data, null, 2)}`;
+        
+        // Then try the proxied URL
+        const proxyResponse = await fetch('/api/google-sheets/disconnect', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer test-token'
+          }
+        });
+        const proxyData = await proxyResponse.json();
+        result.textContent += `\n\nProxied URL:\n${JSON.stringify(proxyData, null, 2)}`;
+      } catch (error) {
+        result.textContent = `Error: ${error.message}`;
+      }
+    }
+  </script>
+</body>
+</html> 

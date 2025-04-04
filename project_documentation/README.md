@@ -114,4 +114,60 @@ This documentation provides comprehensive information about the ChatMimic Connec
 - [Development Rules](development_rules.md) - Coding standards and practices
 - [Migration Guide](migration_guide.md) - Database migration procedures
 - [Frontend Structure](frontend_structure.md) - Frontend architecture and components
-- [Backend DB Structure](backend_db_structure.md) - Detailed database architecture 
+- [Backend DB Structure](backend_db_structure.md) - Detailed database architecture
+
+## Development Setup
+
+### Prerequisites
+- Node.js (v16+)
+- npm (v8+)
+- Firebase account (for authentication)
+
+### Setup Steps
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/chatmimic-connect.git
+   cd chatmimic-connect
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   cd server && npm install && cd ..
+   ```
+
+3. Configure Firebase Authentication:
+   - Create a Firebase service account in your Firebase project settings
+   - Download the service account credentials JSON file
+   - Save it as `server/firebase-credentials.json`
+   - Ensure this file is in your .gitignore (it should be already)
+
+4. Create an environment file:
+   - Copy .env.example to .env
+   - Fill in all required values, especially Firebase-related ones
+
+5. Start the development server:
+   ```bash
+   ./start-dev.sh
+   ```
+
+### Authentication
+
+The system uses Firebase Authentication for all API requests:
+
+- All API requests require a valid Firebase ID token in the Authorization header
+- There are no development shortcuts or mock authentication
+- Create test users in Firebase Authentication console for development
+- Use Firebase Admin SDK to generate tokens for testing
+
+Example of authenticated API request:
+```bash
+curl -H "Authorization: Bearer eyJhbGciOiJSUzI1..." http://localhost:3000/api/your-endpoint
+```
+
+### Important Security Notes
+
+- Never commit the Firebase credentials file to version control
+- All endpoints require proper authentication in all environments
+- No authentication bypasses are allowed, even in development 

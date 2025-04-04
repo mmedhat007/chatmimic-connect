@@ -2,12 +2,18 @@
  * API utilities for interacting with the backend
  */
 
-import { getAuth } from 'firebase/auth';
+import { 
+  getAuth, 
+  signInWithCustomToken 
+} from 'firebase/auth';
 
-// Base API URL
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? '/api' 
-  : 'http://localhost:3000/api';
+// Base API URL - always use the direct URL to the backend in development
+const API_BASE_URL = process.env.NODE_ENV === 'development'
+  ? 'http://localhost:3000/api'
+  : '/api';
+
+// Debug flag for tracing API requests
+const DEBUG_API = process.env.NODE_ENV === 'development';
 
 /**
  * Base API request function that handles authentication
@@ -28,8 +34,15 @@ export const apiRequest = async (path: string, options: RequestInit = {}) => {
 
     // Add authentication token if available
     if (user) {
-      const token = await user.getIdToken();
-      headers['Authorization'] = `Bearer ${token}`;
+      try {
+        console.log(`Getting ID token for user: ${user.uid}`);
+        const token = await user.getIdToken(true); // Force token refresh
+        console.log(`Token received, length: ${token.length} chars`);
+        headers['Authorization'] = `Bearer ${token}`;
+      } catch (tokenError) {
+        console.error('Error getting ID token:', tokenError);
+        throw new Error('Failed to get authentication token. Please try logging out and back in.');
+      }
     }
 
     // Combine options with headers
@@ -38,8 +51,33 @@ export const apiRequest = async (path: string, options: RequestInit = {}) => {
       headers,
     };
 
+    // Construct the full URL
+    let url;
+    if (path.startsWith('http')) {
+      // Already a full URL
+      url = path;
+    } else if (process.env.NODE_ENV === 'development') {
+      // In development, always use the full localhost URL
+      if (path.startsWith('/api')) {
+        // Path already includes /api prefix
+        url = `http://localhost:3000${path}`;
+      } else {
+        // Path doesn't include /api prefix
+        url = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+      }
+    } else {
+      // In production, use relative paths
+      if (path.startsWith('/api')) {
+        url = path;
+      } else {
+        url = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+      }
+    }
+    
+    if (DEBUG_API) console.log(`Making API request to: ${url}`);
+    
     // Make the API request
-    const response = await fetch(path, requestOptions);
+    const response = await fetch(url, requestOptions);
 
     // Handle HTTP errors
     if (!response.ok) {
@@ -57,6 +95,13 @@ export const apiRequest = async (path: string, options: RequestInit = {}) => {
     return response.status === 204 ? {} : await response.json();
   } catch (error) {
     console.error('API request failed:', error);
+    
+    // Add specific handling for connection errors
+    if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+      console.error(`Connection error - Is the backend server running at http://localhost:3000?`);
+      throw new Error(`Connection error: Unable to reach the API server. Please make sure the backend is running on port 3000.`);
+    }
+    
     throw error;
   }
 };
@@ -76,167 +121,68 @@ export const proxyRequest = async (
   options: RequestInit = {}
 ) => {
   // Build path with service and endpoint
-  const path = `/api/proxy/${service}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const path = `/proxy/${service}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
   
   // Ensure headers exist in options
   const headers = options.headers ? { ...options.headers } : {};
-  
-  // Make sure we're sending proper authorization
-  const auth = getAuth();
-  const user = auth.currentUser;
-  
-  // Only add Authorization if not already present
-  if (user && !headers['Authorization'] && !headers['authorization']) {
-    try {
-      const token = await user.getIdToken(true); // Force token refresh if needed
-      headers['Authorization'] = `Bearer ${token}`;
-    } catch (authError) {
-      console.error('Failed to get auth token:', authError);
-      throw new Error('Authentication error: Unable to retrieve valid token');
-    }
-  }
-  
-  // For Google-specific requests, ensure the service is passed
-  if (service === 'google' || service === 'sheets') {
-    headers['X-Service'] = service;
-  }
-  
-  // Update options with headers
-  const updatedOptions = {
-    ...options,
-    headers
-  };
-  
+
   try {
-    const response = await apiRequest(path, updatedOptions);
-    return response;
-  } catch (error) {
-    // Handle specific error types
-    if (error instanceof Error) {
-      // Check if this is a token expired error from Google
-      if (error.message.includes('401') && (service === 'google' || service === 'sheets')) {
-        console.error('Google API auth error:', error.message);
-        // Let the server handle token refresh and just throw a clearer error
-        throw new Error(`Google API authentication error: Please check your Google connection in settings`);
+    const auth = getAuth();
+    const user = auth.currentUser;
+    
+    // Prepare headers with authentication if user is logged in
+    const authHeaders: HeadersInit = {
+      'Content-Type': 'application/json',
+      ...headers,
+    };
+
+    // Add authentication token if available
+    if (user) {
+      try {
+        console.log(`Getting ID token for user: ${user.uid}`);
+        const token = await user.getIdToken(true); // Force token refresh
+        console.log(`Token received, length: ${token.length} chars`);
+        authHeaders['Authorization'] = `Bearer ${token}`;
+      } catch (tokenError) {
+        console.error('Error getting ID token:', tokenError);
+        throw new Error('Failed to get authentication token. Please try logging out and back in.');
       }
     }
+
+    // Combine options with headers
+    const requestOptions: RequestInit = {
+      ...options,
+      headers: authHeaders,
+    };
+
+    if (DEBUG_API) console.log(`Making API request to: ${path}`);
+    
+    // Make the API request
+    const response = await fetch(path, requestOptions);
+
+    // Handle HTTP errors
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({
+        error: 'Unknown error',
+        status: response.status,
+      }));
+      
+      throw new Error(
+        errorData.error || `API error: ${response.status} ${response.statusText}`
+      );
+    }
+
+    // Parse JSON response or return empty object for 204 No Content
+    return response.status === 204 ? {} : await response.json();
+  } catch (error) {
+    console.error('API request failed:', error);
+    
+    // Add specific handling for connection errors
+    if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+      console.error(`Connection error - Is the backend server running at http://localhost:3000?`);
+      throw new Error(`Connection error: Unable to reach the API server. Please make sure the backend is running on port 3000.`);
+    }
+    
     throw error;
   }
 };
-
-/**
- * Generate embeddings for text
- */
-export const generateEmbeddings = async (
-  text: string,
-  options?: {
-    model?: string;
-    save?: boolean;
-    type?: string;
-    metadata?: Record<string, any>;
-  }
-) => {
-  return apiRequest('/api/proxy/embeddings', { 
-    method: 'POST',
-    body: JSON.stringify({
-      text,
-      ...options
-    })
-  });
-};
-
-/**
- * Extract structured data from text
- */
-export const extractData = async (
-  message: string,
-  fields: Array<{name: string, type: string}>,
-  model?: string
-) => {
-  return apiRequest('/api/proxy/extract-data', {
-    method: 'POST',
-    body: JSON.stringify({
-      message,
-      fields,
-      model
-    })
-  });
-};
-
-/**
- * Match documents using vector similarity
- */
-export const matchDocuments = async (
-  text?: string,
-  embedding?: number[],
-  threshold?: number,
-  limit?: number
-) => {
-  if (!text && !embedding) {
-    throw new Error('Either text or embedding must be provided');
-  }
-  
-  return apiRequest('/api/proxy/match-documents', {
-    method: 'POST',
-    body: JSON.stringify({
-      text,
-      embedding,
-      threshold,
-      limit
-    })
-  });
-};
-
-/**
- * Save user configuration
- */
-export const saveUserConfig = async (config: {
-  name: string;
-  behaviorRules: Array<{rule: string, description?: string}>;
-  isActive?: boolean;
-  settings?: Record<string, any>;
-}) => {
-  return apiRequest('/api/config', {
-    method: 'POST',
-    body: JSON.stringify(config)
-  });
-};
-
-/**
- * Get user configuration
- */
-export const getUserConfig = async () => {
-  return apiRequest('/api/config', { method: 'GET' });
-};
-
-export const getUser = async () => {
-  return apiRequest('/api/user', { method: 'GET' });
-};
-
-export const updateUserProfile = async (profileData: any) => {
-  return apiRequest('/api/user/profile', { 
-    method: 'PUT',
-    body: JSON.stringify(profileData)
-  });
-};
-
-export const getGoogleSheets = async () => {
-  return apiRequest('/api/google/sheets', { method: 'GET' });
-};
-
-export const getConfigList = async () => {
-  return apiRequest('/api/configs', { method: 'GET' });
-};
-
-export default {
-  proxyRequest,
-  generateEmbeddings,
-  extractData,
-  matchDocuments,
-  saveUserConfig,
-  getUserConfig,
-  getUser,
-  updateUserProfile,
-  getGoogleSheets,
-  getConfigList
-}; 

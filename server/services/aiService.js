@@ -8,34 +8,70 @@ const logger = require('../utils/logger');
 /**
  * Generate embeddings for the provided text using OpenAI
  * @param {string} text - The text to generate embeddings for
+ * @param {string} model - The OpenAI model to use for embeddings (optional)
  * @returns {Promise<Array<number>>} The embedding vector
  */
-const generateEmbeddings = async (text) => {
+const generateEmbeddings = async (text, model = 'text-embedding-3-small') => {
   try {
-    logger.debug('Generating embeddings', { textLength: text.length });
+    if (!text || typeof text !== 'string') {
+      throw new Error('Text must be a non-empty string');
+    }
     
+    logger.debug('Generating embeddings', { textLength: text.length, model });
+    
+    let apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey || apiKey.trim() === '') {
+      logger.error('OpenAI API key missing or empty', {
+        keyFound: !!apiKey,
+        keyLength: apiKey ? apiKey.length : 0
+      });
+      throw new Error('OpenAI API key is not configured in the environment. Please check the server/.env file.');
+    }
+    
+    // Handle line breaks and whitespace in the API key
+    apiKey = apiKey.replace(/[\r\n\s]+/g, '');
+    
+    if (apiKey.length < 20) {
+      logger.error('OpenAI API key appears to be invalid (too short)', {
+        keyLength: apiKey.length
+      });
+      throw new Error('OpenAI API key appears to be invalid (too short). Please check the server/.env file.');
+    }
+    
+    // Debug log to help troubleshoot (mask most of the key for security)
+    const maskedKey = apiKey.substring(0, 7) + '...' + apiKey.substring(apiKey.length - 4);
+    logger.debug('Using OpenAI API key', { keyPattern: maskedKey, keyLength: apiKey.length });
+    
+    // Use direct API call to OpenAI to avoid proxy issues
     const response = await makeRequest({
       url: 'https://api.openai.com/v1/embeddings',
       method: 'POST',
       service: 'openai',
       data: {
         input: text,
-        model: 'text-embedding-3-small',
+        model: model || 'text-embedding-3-small',
       },
+      cleanKey: apiKey // Pass the cleaned key to makeRequest
     });
     
-    if (!response.data || !response.data[0] || !response.data[0].embedding) {
+    if (!response || !response.data || !response.data[0] || !response.data[0].embedding) {
+      logger.error('Invalid embedding response format', { 
+        response: typeof response === 'object' ? 'Response received but format is invalid' : 'No response received'
+      });
       throw new Error('Invalid embedding response format');
     }
     
     logger.debug('Successfully generated embeddings', { 
       vectors: response.data[0].embedding.length,
+      model
     });
     
     return response.data[0].embedding;
   } catch (error) {
     logger.error('Error generating embeddings', {
       error: error.message,
+      stackTrace: error.stack,
+      model,
       service: 'openai',
     });
     throw new Error(`Failed to generate embeddings: ${error.message}`);

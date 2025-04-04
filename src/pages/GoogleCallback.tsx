@@ -119,15 +119,21 @@ const GoogleCallback: React.FC = () => {
           }
         }
 
-        // Get fresh ID token
+        // Get fresh ID token for real Firebase auth
         const idToken = await currentUser.getIdToken(true);
         
-        // Use the secure backend endpoint for token exchange
-        const response = await fetch('/api/google-oauth/exchange-token', {
+        // Use port 3000 for backend in development mode
+        const baseUrl = process.env.NODE_ENV === 'development' 
+          ? 'http://localhost:3000' 
+          : '';
+        
+        console.log(`Using ${baseUrl}/api/google-oauth/exchange-token for token exchange`);
+        
+        const response = await fetch(`${baseUrl}/api/google-oauth/exchange-token`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': idToken ? `Bearer ${idToken}` : ''
+            'Authorization': `Bearer ${idToken}`
           },
           body: JSON.stringify({
             code: authCode,
@@ -141,11 +147,14 @@ const GoogleCallback: React.FC = () => {
           let errorData;
           try {
             errorData = JSON.parse(errorText);
+            console.log('Error response from token exchange:', errorData);
           } catch (e) {
             console.error('Failed to parse error response:', errorText);
             throw new Error('Failed to exchange token - server returned: ' + errorText.substring(0, 100));
           }
-          throw new Error(errorData.error || 'Failed to exchange token');
+          
+          // Throw the specific error message from the server for better debugging
+          throw new Error(errorData.message || errorData.error || 'Failed to exchange token');
         }
         
         const responseData = await response.json();

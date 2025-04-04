@@ -148,15 +148,58 @@ CORS_ORIGIN=http://localhost:8080
    npm install
    ```
 
-2. Start development server:
+2. Copy the example environment file:
+   ```
+   cp .env.example .env
+   ```
+
+3. Update the `.env` file with your API keys and other configuration.
+
+4. Start the development server:
    ```
    npm run dev
    ```
 
-3. Run tests:
-   ```
-   npm test
-   ```
+### Testing the API
+
+We've added an API testing script to help verify the functionality of the endpoints. This is especially useful after making changes to ensure everything is working correctly.
+
+To run the tests:
+
+```
+cd tests
+node api-test.js
+```
+
+By default, it will test all endpoints on localhost:3000. You can customize the behavior with these options:
+
+```
+Options:
+  -u, --url URL              Base URL for API (default: http://localhost:3000)
+  -t, --token TOKEN          Auth token for authenticated requests
+  --no-embeddings            Skip embeddings tests
+  --no-google-sheets         Skip Google Sheets tests
+  --no-proxy                 Skip general proxy endpoint tests
+  -v, --verbose              Show detailed error information
+```
+
+Example of testing against production with an auth token:
+
+```
+node api-test.js -u https://api.chatmimic.com -t "your-firebase-auth-token" -v
+```
+
+### Recent API Fixes
+
+We've recently fixed several issues in the API:
+
+1. **Embeddings Endpoint**: Fixed response format and error handling.
+2. **Google Sheets Integration**: Improved authentication, fixed disconnect endpoint.
+3. **Proxy Service**: Enhanced error handling and request validation.
+4. **CORS Configuration**: Updated to allow proper cross-origin requests in development.
+5. **Authentication**: Improved token handling and error reporting.
+
+If you encounter any issues, please run the test script with verbose output and check the logs for detailed error information.
 
 ## Security
 

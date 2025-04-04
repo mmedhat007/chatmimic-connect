@@ -32,6 +32,11 @@ dist-ssr
 server/.env
 *.env
 
+# Firebase credentials
+*firebase-credentials*.json
+server/firebase-credentials.json
+*firebase-adminsdk*.json
+
 # Chatmimic identity assets
 "Chatmimic identity"
 

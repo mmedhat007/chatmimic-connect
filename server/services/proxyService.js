@@ -79,26 +79,93 @@ apiClient.interceptors.response.use(
  * @param {Object} options.params - URL parameters
  * @param {string} options.service - Service name for authentication (e.g., 'groq', 'supabase', 'openai')
  * @param {string} options.userId - User ID for requests requiring user context
+ * @param {string} options.cleanKey - Clean API key (optional, for OpenAI)
  * @returns {Promise<Object>} Response data
  */
-const makeRequest = async ({ url, method = 'GET', data = {}, headers = {}, params = {}, service, userId }) => {
+const makeRequest = async ({ url, method = 'GET', data = {}, headers = {}, params = {}, service, userId, cleanKey }) => {
   try {
-    // Add service-specific authentication
-    const authHeaders = await getAuthHeaders(service, headers, userId);
-    
-    // Create a clean headers object with all normalized headers
-    const normalizedHeaders = normalizeHeaders({...headers, ...authHeaders});
-    
-    const response = await apiClient({
+    if (!url) {
+      throw new Error('URL is required for API request');
+    }
+
+    // Log sanitized request details
+    const sanitizedData = { ...data };
+    if (sanitizedData.input) {
+      sanitizedData.input = `${typeof sanitizedData.input === 'string' ? sanitizedData.input.substring(0, 20) : '[data]'}... (truncated)`;
+    }
+    logger.debug('Making external API request', {
       url,
       method,
-      data,
-      params,
-      headers: normalizedHeaders,
+      service,
+      userId: userId || 'not-provided',
+      dataKeys: Object.keys(data || {})
     });
+    
+    // Get standard headers with content type
+    const normalizedHeaders = normalizeHeaders(headers);
+    
+    // Add service-specific auth headers
+    let authHeaders = {};
+    if (service) {
+      // If we have a clean key for OpenAI, use it directly instead of getting from environment
+      if (service === 'openai' && cleanKey) {
+        authHeaders['Authorization'] = `Bearer ${cleanKey}`;
+      } else {
+        // Otherwise get auth headers normally
+        authHeaders = await getAuthHeaders(service, normalizedHeaders, userId);
+      }
+    }
+    
+    // Combine all headers
+    const requestHeaders = {
+      ...normalizedHeaders,
+      ...authHeaders
+    };
+    
+    // Add useful default headers if not provided
+    if (!requestHeaders['Content-Type'] && !requestHeaders['content-type']) {
+      requestHeaders['Content-Type'] = 'application/json';
+    }
+    
+    const axiosConfig = {
+      url,
+      method,
+      headers: requestHeaders,
+      timeout: 60000, // 60 second timeout for longer API calls
+    };
+    
+    // Only add data for non-GET requests that have data
+    if (method.toUpperCase() !== 'GET' && Object.keys(data || {}).length > 0) {
+      axiosConfig.data = data;
+    }
+    
+    // Add params if they exist
+    if (Object.keys(params || {}).length > 0) {
+      axiosConfig.params = params;
+    }
+
+    // Make the API request
+    const response = await apiClient(axiosConfig);
+    
+    // Validate response exists and has data
+    if (!response || response.status >= 400) {
+      throw new Error(`API request failed with status: ${response?.status || 'unknown'}`);
+    }
     
     return response.data;
   } catch (error) {
+    // Log detailed error information
+    logger.error('API request error', {
+      url,
+      method,
+      service,
+      errorMessage: error.message,
+      errorName: error.name,
+      errorCode: error.code,
+      responseStatus: error.response?.status,
+      responseData: error.response?.data,
+    });
+
     // Specific handling for Google token errors
     if (service === 'google' || service === 'sheets') {
       if (error.response?.status === 401 && userId) {
@@ -175,17 +242,45 @@ const getAuthHeaders = async (service, headers = {}, userId) => {
   const authHeaders = {};
   
   switch (service) {
-    case 'groq':
-      authHeaders['Authorization'] = `Bearer ${process.env.GROQ_API_KEY}`;
+    case 'groq': {
+      let groqKey = process.env.GROQ_API_KEY;
+      // Handle possible line breaks in the API key
+      if (groqKey) {
+        groqKey = groqKey.replace(/[\r\n\s]+/g, '');
+      }
+      authHeaders['Authorization'] = `Bearer ${groqKey}`;
       break;
+    }
     
-    case 'openai':
-      authHeaders['Authorization'] = `Bearer ${process.env.OPENAI_API_KEY}`;
-      break;
+    case 'openai': {
+      let openaiKey = process.env.OPENAI_API_KEY;
+      if (!openaiKey || openaiKey.trim() === '') {
+        logger.error('OpenAI API key missing or empty when creating auth headers');
+        throw new Error('OpenAI API key is not configured. Please check the server/.env file.');
+      }
       
-    case 'supabase':
-      authHeaders['apiKey'] = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      // Clean the key by removing any line breaks and whitespace
+      openaiKey = openaiKey.replace(/[\r\n\s]+/g, '');
+      if (openaiKey.length < 20) {
+        logger.error('OpenAI API key appears to be invalid (too short)', {
+          keyLength: openaiKey.length
+        });
+        throw new Error('OpenAI API key appears to be invalid (too short). Please check the server/.env file.');
+      }
+      
+      authHeaders['Authorization'] = `Bearer ${openaiKey}`;
       break;
+    }
+      
+    case 'supabase': {
+      let supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      // Handle possible line breaks in the API key
+      if (supabaseKey) {
+        supabaseKey = supabaseKey.replace(/[\r\n\s]+/g, '');
+      }
+      authHeaders['apiKey'] = supabaseKey;
+      break;
+    }
 
     case 'google':
     case 'sheets':

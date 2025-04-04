@@ -75,8 +75,22 @@ const AutomationsPage = () => {
   // Check if embeddings are available
   useEffect(() => {
     const checkEmbeddings = async () => {
-      const available = await checkEmbeddingsAvailable();
-      setEmbeddingsAvailable(available);
+      try {
+        console.log('AutomationsPage: Checking embeddings availability');
+        const available = await checkEmbeddingsAvailable();
+        setEmbeddingsAvailable(available);
+        
+        if (!available) {
+          console.log('AutomationsPage: Embeddings not available');
+          toast.error('Unable to connect to embeddings service. Some AI features may be unavailable.');
+        } else {
+          console.log('AutomationsPage: Embeddings available');
+        }
+      } catch (error) {
+        console.error('Error checking embeddings:', error);
+        setEmbeddingsAvailable(false);
+        toast.error('Error connecting to AI service. Please refresh and try again.');
+      }
     };
     
     checkEmbeddings();
@@ -267,9 +281,24 @@ const AutomationsPage = () => {
       // Also save to localStorage for faster access
       localStorage.setItem(`user_${userUID}_config`, JSON.stringify(config));
       
-      // Only attempt to update embeddings if they're available
-      if (embeddingsAvailable) {
+      // Handle embeddings with multiple retry attempts
+      let embeddingsSuccess = false;
+      
+      // Only attempt to update embeddings if they're available or we haven't checked yet
+      if (embeddingsAvailable === true || embeddingsAvailable === null) {
         try {
+          console.log('Attempting to update embeddings...');
+          
+          // First, check if embeddings are available if we haven't checked yet
+          if (embeddingsAvailable === null) {
+            const available = await checkEmbeddingsAvailable();
+            setEmbeddingsAvailable(available);
+            if (!available) {
+              console.log('Embeddings service not available');
+              // Don't throw - we'll continue without embeddings
+            }
+          }
+          
           // Update embeddings for different sections with metadata
           // Company info embeddings
           await updateEmbeddings(
@@ -308,6 +337,7 @@ const AutomationsPage = () => {
             'complete_config'
           );
           
+          embeddingsSuccess = true;
           console.log('Successfully updated embeddings');
         } catch (embeddingError) {
           console.error('Error updating embeddings:', embeddingError);
@@ -315,7 +345,11 @@ const AutomationsPage = () => {
         }
       }
       
-      toast.success('Agent configuration saved successfully!');
+      toast.success(
+        embeddingsSuccess 
+          ? 'Agent configuration saved successfully with AI embeddings!' 
+          : 'Agent configuration saved successfully!'
+      );
     } catch (error) {
       console.error('Error saving configuration:', error);
       toast.error('Failed to save agent configuration');

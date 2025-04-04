@@ -25,9 +25,35 @@ The Google Sheets integration allows users to:
    - Handles any authentication errors with appropriate UI feedback
 6. Tokens are securely stored on the server using encryption
 
+### Development Environment Authentication
+
+The development environment (`NODE_ENV=development`) uses the same exact authentication flow as production:
+
+1. Real Firebase authentication is required
+2. Real Google OAuth credentials must be configured in the environment
+3. The frontend communicates with the backend using real Firebase ID tokens
+4. CORS is properly configured to handle cross-origin requests between port 8080 (frontend) and 3000 (backend)
+5. No mock tokens or fake authentication is used - all credentials must be real and valid
+
+#### Setting Up Development Environment
+
+To properly set up your development environment:
+
+1. Create a Firebase project and download service account credentials
+2. Set up Google OAuth 2.0 Client ID and Client Secret in Google Cloud Console
+3. Configure your `.env` file with:
+   ```
+   GOOGLE_CLIENT_ID=<your-google-client-id>
+   GOOGLE_CLIENT_SECRET=<your-google-client-secret>
+   TOKEN_ENCRYPTION_KEY=<32-byte-random-hex>
+   GOOGLE_APPLICATION_CREDENTIALS=<path-to-firebase-credentials>
+   FIREBASE_DATABASE_URL=<your-firebase-database-url>
+   ```
+4. Run the `start-dev.sh` script which will verify all required credentials are present
+
 ## Authentication Resilience
 
-The Google OAuth flow now includes mechanisms to maintain session state:
+The Google OAuth flow includes mechanisms to maintain session state:
 
 - A state parameter containing the encrypted user ID is passed to Google and returned to the callback URL
 - The callback component implements a retry mechanism that waits for Firebase auth to initialize
@@ -140,10 +166,55 @@ For production deployment, the system:
 Common issues:
 - **Authentication errors**: Check that the Google client ID and secret are properly set in environment variables
 - **Token expiration**: The system automatically refreshes tokens that expire
+- **Cross-origin (CORS) issues**: For development, make sure the server's CORS configuration allows requests from `http://localhost:8080`
+- **Internal Server Error (500) during token exchange**: Verify all required environment variables are set in both frontend and backend
+- **Missing Google credentials in backend**: Ensure your `.env` file includes both VITE_ variables for frontend and regular variables for backend
 - **Data extraction issues**: Review the column configuration to ensure proper data mapping
 - **Duplicate rows**: The system checks for existing contacts before adding new rows
 - **Missing data**: If the AI fails to extract certain information, try updating the column's AI prompt
 - **Firebase authentication issues**: The callback page now includes a retry mechanism and manual retry button
+- **White screen on Google Sheets page refresh**: This is usually due to missing authentication state. Always navigate through the app rather than directly entering the URL
+
+### Development Environment Issues
+
+When running in development mode (`NODE_ENV=development`):
+- If you receive CORS errors, check that the backend server's CORS configuration includes all necessary origins (typically `http://localhost:8080`)
+- For token exchange errors, verify the frontend code is using the full backend URL (`http://localhost:3000/api/google-oauth/exchange-token`)
+- Special OPTIONS route handlers are configured for Google OAuth endpoints to facilitate correct preflight requests
+- The server requires proper Firebase initialization with valid credentials
+- Use the provided `start-dev.sh` script in the project root to ensure all required environment variables are properly set
+- Ensure your Firebase service account credentials file path is correctly set in `GOOGLE_APPLICATION_CREDENTIALS`
+
+### Page Reloads and Route Handling
+
+When developing a single-page application, refreshing routes like `/google-sheets` can cause issues:
+
+1. The updated application includes route restoration that:
+   - Detects direct requests to client routes when using the backend server directly
+   - Redirects to the frontend with the path stored in localStorage
+   - Automatically restores the correct route when the app loads
+   
+2. To avoid page reload issues:
+   - Always use the `start-dev.sh` script which includes the route handling updates
+   - The frontend includes a `RouteRestorer` component that checks for saved routes on load
+   - In production, the server properly handles all routes by serving the SPA index.html
+
+### Quick Fix for Common Problems
+
+If you encounter Google OAuth issues:
+1. Run `./start-dev.sh` from the project root to start both servers with proper environment settings
+2. The script ensures both frontend and backend use consistent ports (8080 for frontend, 3000 for backend)
+3. It loads environment variables from your `.env` file and verifies required credentials
+4. It handles port conflicts by stopping any existing processes on the required ports
+5. It properly handles paths with spaces (e.g., "DenoteAI Projects" instead of "DenoteAI_Projects")
+
+### Path Issues in Development
+
+If your project is in a directory path with spaces (e.g., `/Users/username/My Projects/chatmimic-connect`):
+1. Always use the provided scripts (`start-dev.sh`) which handle spaces in paths correctly
+2. When running npm commands manually, make sure to `cd` to the exact directory first
+3. The updated scripts use absolute paths with proper quoting to avoid path-related issues
+4. If you need to specify paths manually in commands, always enclose them in quotes
 
 ## Environment Variables
 
@@ -156,6 +227,8 @@ The following environment variables are required:
 - `GOOGLE_CLIENT_ID`: Your Google OAuth client ID
 - `GOOGLE_CLIENT_SECRET`: Your Google OAuth client secret
 - `TOKEN_ENCRYPTION_KEY`: A 32-byte random hex string for token encryption
+- `GOOGLE_APPLICATION_CREDENTIALS`: Path to Firebase service account credentials file
+- `FIREBASE_DATABASE_URL`: Your Firebase database URL
 
 ### AI Service
 The AI service now uses the Groq API key which should be set as an environment variable:

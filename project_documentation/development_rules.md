@@ -232,6 +232,26 @@ const response = await fetch('/api/google-oauth/exchange-token', {
 - Implement retry mechanisms when auth state might be lost
 - Store session information securely
 
+## Security Rules
+
+### Authentication and Authorization
+
+1. **No Security Bypasses in Development**:
+   - Development environment must enforce the same authentication rules as production.
+   - Absolutely no shortcuts, bypasses, or mock users are allowed.
+   - Always use real Firebase authentication, even in development.
+   - Test users must be properly created in Firebase for development purposes.
+
+2. **Sensitive Data**:
+   - Never hardcode credentials, API keys, or secrets in the codebase.
+   - Use environment variables for all sensitive configuration.
+   - For development, each developer should have their own Firebase service account.
+
+3. **Firebase Service Account**:
+   - The `GOOGLE_APPLICATION_CREDENTIALS` environment variable is mandatory in all environments.
+   - Each developer must obtain and use their own Firebase service account file.
+   - The server will refuse to start without valid Firebase credentials.
+
 ---
 
 This document will be updated as new rules and guidelines are established. 

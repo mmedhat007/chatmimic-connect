@@ -1,0 +1,38 @@
+{
+  "timestamp": "2025-04-04T18:12:35.246Z",
+  "config": {
+    "baseUrl": "http://localhost:3000",
+    "authToken": "",
+    "testEmbeddings": true,
+    "testGoogleSheets": true,
+    "testProxyEndpoint": true,
+    "verbose": false
+  },
+  "results": {
+    "passed": 3,
+    "failed": 0,
+    "skipped": 2,
+    "tests": [
+      {
+        "name": "Health endpoint responded successfully",
+        "status": "passed"
+      },
+      {
+        "name": "Public endpoint Direct health endpoint (/health) responded successfully",
+        "status": "passed"
+      },
+      {
+        "name": "Public endpoint API health endpoint (/api/health) responded successfully",
+        "status": "passed"
+      },
+      {
+        "name": "Embeddings test skipped - authentication required",
+        "status": "skipped"
+      },
+      {
+        "name": "Google Sheets status test skipped - authentication required",
+        "status": "skipped"
+      }
+    ]
+  }
+}
