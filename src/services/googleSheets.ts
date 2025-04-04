@@ -1,6 +1,8 @@
 import { getCurrentUser } from './firebase';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
+import { proxyRequest } from '../utils/api';
+import { apiRequest } from '../utils/api';
 
 // Types
 export interface SheetColumn {
@@ -24,6 +26,11 @@ export interface SheetConfig {
   autoUpdateFields?: boolean;
 }
 
+// Helper function to create Auth header with Bearer prefix
+const createAuthHeader = (token: string): string => {
+  return token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+};
+
 /**
  * Get Google Sheets OAuth credentials for the current user
  */
@@ -41,66 +48,9 @@ export const getGoogleSheetsCredentials = async () => {
     throw new Error('Google Sheets not connected');
   }
   
-  // Check if token is expired and needs refreshing
-  if (credentials.expiresAt && credentials.expiresAt < Date.now()) {
-    // Token is expired, need to refresh
-    if (!credentials.refreshToken) {
-      throw new Error('Refresh token not available, re-authorization required');
-    }
-    
-    try {
-      const refreshedCredentials = await refreshGoogleToken(credentials.refreshToken);
-      // Update credentials in Firebase
-      await updateDoc(doc(db, 'Users', userUID), {
-        'credentials.googleSheetsOAuth': {
-          ...credentials,
-          accessToken: refreshedCredentials.access_token,
-          expiresAt: Date.now() + (refreshedCredentials.expires_in * 1000),
-        }
-      });
-      
-      // Return refreshed credentials
-      return {
-        ...credentials,
-        accessToken: refreshedCredentials.access_token,
-        expiresAt: Date.now() + (refreshedCredentials.expires_in * 1000),
-      };
-    } catch (error) {
-      console.error('Error refreshing token:', error);
-      throw new Error('Failed to refresh Google token');
-    }
-  }
-  
+  // We'll get the access token but rely on the server's token refresh mechanism
+  // to handle expired tokens through the proxy service
   return credentials;
-};
-
-/**
- * Refresh a Google OAuth token using the refresh token
- */
-const refreshGoogleToken = async (refreshToken: string) => {
-  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
-  const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET || '';
-  
-  const params = new URLSearchParams();
-  params.append('client_id', GOOGLE_CLIENT_ID);
-  params.append('client_secret', GOOGLE_CLIENT_SECRET);
-  params.append('refresh_token', refreshToken);
-  params.append('grant_type', 'refresh_token');
-  
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: params,
-  });
-  
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(`Failed to refresh token: ${errorData.error_description || errorData.error}`);
-  }
-  
-  return await response.json();
 };
 
 /**
@@ -166,22 +116,10 @@ export const revokeGoogleAuth = async () => {
   if (!userUID) throw new Error('No user logged in');
   
   try {
-    // First, revoke the token with Google
-    const credentials = await getGoogleSheetsCredentials();
-    
-    if (credentials.accessToken) {
-      // Notify Google to revoke the token
-      await fetch(`https://oauth2.googleapis.com/revoke?token=${credentials.accessToken}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      });
-    }
-    
-    // Then remove the token from Firebase
-    await updateDoc(doc(db, 'Users', userUID), {
-      'credentials.googleSheetsOAuth': null
+    // Use the server endpoint to revoke the token and clean up credentials
+    // Don't use proxy here - use direct API call to google-sheets endpoint
+    await apiRequest('/api/google-sheets/disconnect', {
+      method: 'POST'
     });
     
     return true;
@@ -192,129 +130,42 @@ export const revokeGoogleAuth = async () => {
 };
 
 /**
- * Create a new Google Sheet with the specified columns
- */
-export const createSheet = async (config: SheetConfig) => {
-  const credentials = await getGoogleSheetsCredentials();
-  const { accessToken } = credentials;
-  
-  // First, create the spreadsheet
-  if (!config.sheetId) {
-    const createResponse = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        properties: {
-          title: config.name
-        },
-        sheets: [
-          {
-            properties: {
-              title: 'Customer Data'
-            }
-          }
-        ]
-      })
-    });
-
-    if (!createResponse.ok) {
-      const error = await createResponse.json();
-      throw new Error(`Failed to create spreadsheet: ${error.error?.message || 'Unknown error'}`);
-    }
-
-    const createResult = await createResponse.json();
-    config.sheetId = createResult.spreadsheetId;
-  }
-  
-  // Now set up the headers in the sheet
-  const headers = config.columns.map(col => col.name);
-  
-  const updateResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${config.sheetId}/values/A1:${String.fromCharCode(65 + headers.length - 1)}1?valueInputOption=RAW`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      range: `A1:${String.fromCharCode(65 + headers.length - 1)}1`,
-      majorDimension: 'ROWS',
-      values: [headers]
-    })
-  });
-
-  if (!updateResponse.ok) {
-    const error = await updateResponse.json();
-    throw new Error(`Failed to update sheet headers: ${error.error?.message || 'Unknown error'}`);
-  }
-
-  return config;
-};
-
-/**
- * Append a row to a Google Sheet
- * @param sheetId The ID of the sheet to append to
- * @param data An object with column IDs as keys and values to append
- */
-export const appendSheetRow = async (sheetId: string, data: Record<string, string>) => {
-  const credentials = await getGoogleSheetsCredentials();
-  const { accessToken } = credentials;
-  
-  // Get the sheet config to know the column structure
-  const sheetConfig = await getSheetConfig(sheetId);
-  if (!sheetConfig) throw new Error('Sheet configuration not found');
-  
-  // Create an array with the values in the correct order based on the config's columns
-  const values = sheetConfig.columns.map(column => data[column.id] || '');
-  
-  // Append the row - fix the URL to use "A:A" consistently
-  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:A:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      range: 'A:A',
-      majorDimension: 'ROWS',
-      values: [values]
-    })
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(`Failed to append row: ${error.error?.message || 'Unknown error'}`);
-  }
-  
-  const result = await response.json();
-  return result;
-};
-
-/**
- * Get a list of all user's sheets
+ * Get user's Google Sheets
  */
 export const getUserSheets = async () => {
   const credentials = await getGoogleSheetsCredentials();
   const { accessToken } = credentials;
   
-  const response = await fetch('https://www.googleapis.com/drive/v3/files?q=mimeType%3D%27application%2Fvnd.google-apps.spreadsheet%27', {
-    headers: {
-      'Authorization': `Bearer ${accessToken}`
+  try {
+    // Build query params for Google Drive API
+    const queryParams = new URLSearchParams({
+      q: "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+      fields: "files(id,name,createdTime)"
+    }).toString();
+    
+    // Use the proxyRequest to handle authentication and token refresh
+    const response = await proxyRequest(
+      'google',
+      `https://www.googleapis.com/drive/v3/files?${queryParams}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': createAuthHeader(accessToken)
+        }
+      }
+    );
+    
+    // Ensure response.files is an array before returning
+    if (response && Array.isArray(response.files)) {
+      return response.files;
+    } else {
+      console.warn('Unexpected response format from Google Drive API:', response);
+      return [];
     }
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(`Failed to fetch sheets: ${error.error?.message || 'Unknown error'}`);
+  } catch (error) {
+    console.error('Failed to fetch Google Sheets:', error);
+    throw new Error(`Failed to fetch Google Sheets: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-  
-  const result = await response.json();
-  return result.files.map((file: any) => ({
-    id: file.id,
-    name: file.name
-  }));
 };
 
 /**
@@ -420,28 +271,31 @@ export const findContactInSheet = async (sheetId: string, phoneNumber: string): 
   // Convert to A1 notation column
   const phoneColumn = String.fromCharCode(65 + phoneColumnIndex);
   
-  // Get all values from the phone column
-  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${phoneColumn}:${phoneColumn}`, {
-    headers: {
-      'Authorization': `Bearer ${accessToken}`
-    }
-  });
+  // Get all values from the phone column using proxy service
+  try {
+    const result = await proxyRequest(
+      'google',
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${phoneColumn}:${phoneColumn}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': createAuthHeader(accessToken)
+        }
+      }
+    );
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(`Failed to fetch sheet data: ${error.error?.message || 'Unknown error'}`);
-  }
-  
-  const result = await response.json();
-  
-  // Skip header row (index 0) and search for the phone number
-  for (let i = 1; i < (result.values?.length || 0); i++) {
-    if (result.values[i] && result.values[i][0] === phoneNumber) {
-      return i + 1; // Convert to 1-based row index
+    // Skip header row (index 0) and search for the phone number
+    for (let i = 1; i < (result.values?.length || 0); i++) {
+      if (result.values[i] && result.values[i][0] === phoneNumber) {
+        return i + 1; // Convert to 1-based row index
+      }
     }
+    
+    return null; // Not found
+  } catch (error) {
+    console.error('Failed to search sheet data:', error);
+    throw new Error(`Failed to search sheet data: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-  
-  return null; // Not found
 };
 
 /**
@@ -472,25 +326,173 @@ export const updateSheetRow = async (
     const columnLetter = String.fromCharCode(65 + columnIndex);
     const cellRef = `${columnLetter}${rowIndex}`;
     
-    // Update the cell
-    const updateResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${cellRef}?valueInputOption=RAW`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        range: cellRef,
-        majorDimension: 'ROWS',
-        values: [[value]]
-      })
-    });
-
-    if (!updateResponse.ok) {
-      const error = await updateResponse.json();
-      throw new Error(`Failed to update cell ${cellRef}: ${error.error?.message || 'Unknown error'}`);
+    try {
+      // Update the cell
+      await proxyRequest(
+        'google',
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${cellRef}?valueInputOption=RAW`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': createAuthHeader(accessToken)
+          },
+          body: JSON.stringify({
+            range: cellRef,
+            majorDimension: 'ROWS',
+            values: [[value]]
+          })
+        }
+      );
+    } catch (error) {
+      console.error(`Failed to update cell ${cellRef}:`, error);
+      throw new Error(`Failed to update cell ${cellRef}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
   
   return true;
+};
+
+/**
+ * Create a new Google Sheet with the specified columns
+ */
+export const createSheet = async (config: SheetConfig) => {
+  const credentials = await getGoogleSheetsCredentials();
+  const { accessToken } = credentials;
+  
+  // First, create the spreadsheet
+  if (!config.sheetId) {
+    try {
+      const createResult = await proxyRequest(
+        'google',
+        'https://sheets.googleapis.com/v4/spreadsheets',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': createAuthHeader(accessToken)
+          },
+          body: JSON.stringify({
+            properties: {
+              title: config.name
+            },
+            sheets: [
+              {
+                properties: {
+                  title: 'Customer Data'
+                }
+              }
+            ]
+          })
+        }
+      );
+      
+      config.sheetId = createResult.spreadsheetId;
+    } catch (error) {
+      console.error('Failed to create spreadsheet:', error);
+      throw new Error(`Failed to create spreadsheet: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+  
+  // Now set up the headers in the sheet
+  const headers = config.columns.map(col => col.name);
+  
+  try {
+    await proxyRequest(
+      'google',
+      `https://sheets.googleapis.com/v4/spreadsheets/${config.sheetId}/values/A1:${String.fromCharCode(65 + headers.length - 1)}1?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': createAuthHeader(accessToken)
+        },
+        body: JSON.stringify({
+          range: `A1:${String.fromCharCode(65 + headers.length - 1)}1`,
+          majorDimension: 'ROWS',
+          values: [headers]
+        })
+      }
+    );
+    
+    return config;
+  } catch (error) {
+    console.error('Failed to set up sheet headers:', error);
+    throw new Error(`Failed to set up sheet headers: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+/**
+ * Append a row to a Google Sheet
+ * @param sheetId The ID of the sheet to append to
+ * @param data An object with column IDs as keys and values to append
+ */
+export const appendSheetRow = async (sheetId: string, data: Record<string, string>) => {
+  const credentials = await getGoogleSheetsCredentials();
+  const { accessToken } = credentials;
+  
+  // Get the sheet config to know the column structure
+  const sheetConfig = await getSheetConfig(sheetId);
+  if (!sheetConfig) throw new Error('Sheet configuration not found');
+  
+  // Create an array with the values in the correct order based on the config's columns
+  const values = sheetConfig.columns.map(column => data[column.id] || '');
+  
+  try {
+    const result = await proxyRequest(
+      'google',
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:A:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': createAuthHeader(accessToken)
+        },
+        body: JSON.stringify({
+          range: 'A:A',
+          majorDimension: 'ROWS',
+          values: [values]
+        })
+      }
+    );
+    
+    return result;
+  } catch (error) {
+    console.error('Failed to append row:', error);
+    throw new Error(`Failed to append row: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+/**
+ * Exchange code for token after Google OAuth callback
+ * @param code The authorization code from Google
+ * @param state The state parameter from the OAuth flow
+ */
+export const exchangeGoogleAuthCode = async (code: string, state: string) => {
+  try {
+    // Use direct API path instead of proxy for OAuth token exchange
+    const response = await apiRequest('/api/google-oauth/exchange-token', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        code, 
+        state,
+        redirectUri: `${window.location.origin}/google-callback`
+      })
+    });
+    
+    return response;
+  } catch (error) {
+    console.error('Error exchanging Google auth code:', error);
+    throw new Error(`Failed to exchange Google auth code: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+/**
+ * Check Google Sheets connection status with the server
+ * @returns Connection status object
+ */
+export const checkGoogleSheetsConnection = async () => {
+  try {
+    const response = await apiRequest('/api/google-sheets/status');
+    return response.data || { connected: false };
+  } catch (error) {
+    console.error('Error checking Google Sheets connection:', error);
+    return { connected: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
 }; 

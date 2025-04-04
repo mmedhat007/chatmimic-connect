@@ -67,7 +67,12 @@ const GoogleCallback: React.FC = () => {
     const retryDelay = 1000; // 1 second between retries
     
     const processAuthCode = async () => {
+      setLoading(true);
+      setError(null);
+      
       try {
+        console.log('Processing auth code in Google callback');
+        
         // Get the current Firebase user
         const userUID = getCurrentUser();
         
@@ -122,16 +127,24 @@ const GoogleCallback: React.FC = () => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`
+            'Authorization': idToken ? `Bearer ${idToken}` : ''
           },
           body: JSON.stringify({
             code: authCode,
-            redirectUri: `${window.location.origin}/google-callback`
+            redirectUri: `${window.location.origin}/google-callback`,
+            state: searchParams.get('state')
           })
         });
         
         if (!response.ok) {
-          const errorData = await response.json();
+          const errorText = await response.text();
+          let errorData;
+          try {
+            errorData = JSON.parse(errorText);
+          } catch (e) {
+            console.error('Failed to parse error response:', errorText);
+            throw new Error('Failed to exchange token - server returned: ' + errorText.substring(0, 100));
+          }
           throw new Error(errorData.error || 'Failed to exchange token');
         }
         
@@ -151,7 +164,7 @@ const GoogleCallback: React.FC = () => {
 
     // Start the process
     processAuthCode();
-  }, [authCode, retryCount, navigate, stateData]);
+  }, [authCode, retryCount, navigate, stateData, searchParams]);
 
   // Manual retry button handler
   const handleRetry = () => {

@@ -198,12 +198,12 @@ export const startWhatsAppGoogleSheetsIntegration = async (): Promise<() => void
           // Skip if already processing (prevents duplicate sheet entries)
           if (processingMessages[processingId]) {
             console.log(`Already processing message ${message.id}, skipping duplicate processing`);
-            continue;
-          }
-          
+              continue;
+            }
+            
           // Mark as processing
           processingMessages[processingId] = true;
-          
+            
           try {
             // Process with each active config
             for (const config of activeConfigs) {
@@ -567,14 +567,14 @@ export const processWhatsAppMessage = async (
       }
       
       // Get active sheet configurations
-      const sheetConfigs = await getAllSheetConfigs();
-      const activeConfigs = sheetConfigs.filter(config => config.active);
-      
-      if (activeConfigs.length === 0) {
-        console.log('No active Google Sheets integrations found');
-        return false;
-      }
-      
+    const sheetConfigs = await getAllSheetConfigs();
+    const activeConfigs = sheetConfigs.filter(config => config.active);
+    
+    if (activeConfigs.length === 0) {
+      console.log('No active Google Sheets integrations found');
+      return false;
+    }
+    
       // Reset the last processed timestamp for this chat to force processing this test message
       // For a test message, we want to process it regardless of timestamp
       lastProcessedTimestamps[phoneNumber] = message.timestamp - 1;
@@ -587,7 +587,7 @@ export const processWhatsAppMessage = async (
       }
       
       // For test messages, process with all active configs
-      for (const config of activeConfigs) {
+    for (const config of activeConfigs) {
         try {
           // Process test message with the configured trigger criteria
           await processMessageWithConfig(message, contact, config);
@@ -727,13 +727,13 @@ const shouldProcessMessage = async (message: Message, contact: Contact, config: 
           // If contact exists in sheet, allow updates
           return true;
         }
-      } catch (error) {
+  } catch (error) {
         console.error('Error checking existing sheet entries:', error);
       }
       return false;
       
     default:
-      return false;
+    return false;
   }
 };
 
