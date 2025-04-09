@@ -9,6 +9,29 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    proxy: {
+      // Proxy all API requests to the backend server
+      "/api": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+        // Log proxy messages in development 
+        configure: (proxy, _options) => {
+          if (mode === 'development') {
+            proxy.on('error', (err, _req, _res) => {
+              console.log('Proxy error:', err);
+            });
+            proxy.on('proxyReq', (proxyReq, req, _res) => {
+              console.log('Sending request to:', req.method, req.url);
+            });
+            proxy.on('proxyRes', (proxyRes, req, _res) => {
+              console.log('Received response from:', req.method, req.url, 'Status:', proxyRes.statusCode);
+            });
+          }
+        }
+      }
+    }
   },
   plugins: [
     react(),

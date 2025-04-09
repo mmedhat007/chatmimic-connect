@@ -1,12 +1,16 @@
-import { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Contact } from '../types';
 import { Search, Filter } from 'lucide-react';
-import { formatTimestamp } from '../services/firebase';
+import { formatTimestamp, deleteContact } from '../services/firebase';
+import { useToast } from '../hooks/use-toast';
+import ContactContextMenu from './ContactContextMenu';
+import ConfirmationDialog from './ui/ConfirmationDialog';
 
 interface SidebarProps {
   contacts: Contact[];
   activeContact: Contact | null;
   onSelectContact: (contact: Contact) => void;
+  onDeleteContact: (phoneNumber: string) => void;
   lifecycleFilter?: string | null;
 }
 
@@ -86,9 +90,31 @@ const getLifecycleDisplayName = (lifecycle?: string) => {
   }
 };
 
-const Sidebar = ({ contacts, activeContact, onSelectContact, lifecycleFilter }: SidebarProps) => {
+const Sidebar = ({ contacts, activeContact, onSelectContact, onDeleteContact, lifecycleFilter }: SidebarProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'open' | 'closed'>('all');
+  const { toast } = useToast();
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; phoneNumber: string } | null>(null);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [contactToDelete, setContactToDelete] = useState<string | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // Effect to handle clicks outside the context menu
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    if (contextMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    } else {
+      document.removeEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [contextMenu]);
 
   // Filter contacts without re-sorting
   const filteredContacts = contacts
@@ -114,6 +140,52 @@ const Sidebar = ({ contacts, activeContact, onSelectContact, lifecycleFilter }: 
       case 'customer': return 'Customer';
       case 'cold_lead': return 'Cold Lead';
       default: return lifecycleFilter;
+    }
+  };
+
+  // Handle right-click for context menu
+  const handleContextMenu = (event: React.MouseEvent, phoneNumber: string) => {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      phoneNumber: phoneNumber,
+    });
+  };
+  
+  // Close context menu
+  const closeContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  // Initiate deletion process (show confirmation)
+  const handleDeleteRequest = (phoneNumber: string) => {
+    setContactToDelete(phoneNumber);
+    setShowConfirmDialog(true);
+    closeContextMenu();
+  };
+
+  // Confirm deletion (called by modal)
+  const confirmDelete = async () => {
+    if (!contactToDelete) return;
+    
+    try {
+      await deleteContact(contactToDelete);
+      toast({
+        title: "Contact Deleted",
+        description: `${contactToDelete} has been removed.`,
+      });
+      onDeleteContact(contactToDelete); // Notify parent component
+    } catch (error) {
+      console.error("Error deleting contact:", error);
+      toast({
+        title: "Error",
+        description: `Failed to delete contact ${contactToDelete}.`,
+        variant: "destructive",
+      });
+    } finally {
+      setShowConfirmDialog(false);
+      setContactToDelete(null);
     }
   };
 
@@ -195,10 +267,11 @@ const Sidebar = ({ contacts, activeContact, onSelectContact, lifecycleFilter }: 
           filteredContacts.map((contact) => (
             <div
               key={contact.phoneNumber}
-              className={`flex items-start p-4 cursor-pointer hover:bg-gray-100 ${
+              className={`flex items-start p-4 cursor-pointer hover:bg-gray-100 group relative ${
                 activeContact?.phoneNumber === contact.phoneNumber ? 'bg-gray-100' : ''
               }`}
               onClick={() => onSelectContact(contact)}
+              onContextMenu={(e) => handleContextMenu(e, contact.phoneNumber)}
             >
               <div 
                 className="w-12 h-12 flex-shrink-0 bg-gray-300 rounded-full flex items-center justify-center text-white text-lg"
@@ -248,8 +321,10 @@ const Sidebar = ({ contacts, activeContact, onSelectContact, lifecycleFilter }: 
                     </span>
                   </div>
                 </div>
-                <div className="text-sm text-gray-500 truncate max-w-full">
-                  {contact.lastMessage}
+                <div className="flex justify-between items-end mt-1">
+                  <p className="text-sm text-gray-500 truncate pr-4">
+                    {contact.lastMessage}
+                  </p>
                 </div>
                 {contact.tags && contact.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1">
@@ -268,6 +343,26 @@ const Sidebar = ({ contacts, activeContact, onSelectContact, lifecycleFilter }: 
           ))
         )}
       </div>
+
+      {/* Render Context Menu */}
+      {contextMenu && (
+        <ContactContextMenu
+          ref={contextMenuRef}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={closeContextMenu}
+          onDelete={() => handleDeleteRequest(contextMenu.phoneNumber)}
+        />
+      )}
+
+      {/* Render Confirmation Dialog */}
+      <ConfirmationDialog
+        isOpen={showConfirmDialog}
+        onClose={() => setShowConfirmDialog(false)}
+        onConfirm={confirmDelete}
+        title="Delete Contact?"
+        description={`Are you sure you want to delete contact ${contactToDelete}? This action cannot be undone.`}
+      />
     </div>
   );
 };

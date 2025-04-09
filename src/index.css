@@ -168,3 +168,9 @@
 .contact-item:hover {
   background-color: rgba(0, 0, 0, 0.03);
 }
+
+/* Custom styles for Shadcn AlertDialog Overlay */
+[data-state='open'] > div[data-radix-alert-dialog-overlay] {
+  /* Adjust opacity as needed (default is usually 0.8) */
+  background-color: rgba(0, 0, 0, 0.5) !important; /* Example: 50% opacity */
+}

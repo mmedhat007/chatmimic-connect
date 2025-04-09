@@ -15,7 +15,9 @@ import {
   startAfter,
   onSnapshot,
   updateDoc,
-  setDoc
+  setDoc,
+  deleteDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -126,7 +128,10 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
         console.log(`Contact ${doc.id} - Lifecycle:`, data.lifecycle || 'none');
         
         contacts.push({
+          id: doc.id,
+          phone: doc.id,
           phoneNumber: doc.id,
+          name: data.contactName,
           contactName: data.contactName,
           lastMessage: data.lastMessage || '',
           lastMessageTime,
@@ -134,7 +139,7 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
           agentStatus: data.agentStatus || 'on',
           humanAgent: data.humanAgent || false,
           status: data.status || 'open',
-          lifecycle: data.lifecycle || undefined // Ensure lifecycle is included
+          lifecycle: data.lifecycle || undefined
         });
       });
       
@@ -267,10 +272,12 @@ export const getMessages = (phoneNumber: string, onUpdate: (messages: Message[])
         }
 
         return {
-      id: doc.id,
+          id: doc.id,
+          content: data.message || '',
           message: data.message || '',
           timestamp,
           sender: sender as 'agent' | 'human' | 'user',
+          isFromCustomer: sender === 'user',
           date: data.date
         };
       });
@@ -335,7 +342,10 @@ export const getContact = async (phoneNumber: string): Promise<Contact | null> =
       }
 
       return {
+        id: contactSnap.id,
+        phone: contactSnap.id,
         phoneNumber: contactSnap.id,
+        name: data.contactName,
         contactName: data.contactName,
         lastMessage: data.lastMessage || '',
         lastMessageTime,
@@ -778,4 +788,41 @@ export const getContactByPhone = async (phone: string): Promise<Contact | null> 
 export const updateContact = async (contactId: string, updates: Partial<Contact>): Promise<void> => {
   const contactRef = doc(db, 'Contacts', contactId);
   await updateDoc(contactRef, updates);
+};
+
+/**
+ * Delete a contact and all their associated messages.
+ * @param {string} phoneNumber The phone number of the contact to delete.
+ */
+export const deleteContact = async (phoneNumber: string): Promise<void> => {
+  const userUID = getCurrentUser();
+  if (!userUID) {
+    console.error('No user logged in, cannot delete contact.');
+    throw new Error('User not authenticated');
+  }
+
+  console.log(`Attempting to delete contact: ${phoneNumber} for user: ${userUID}`);
+  const contactRef = doc(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber);
+  const messagesRef = collection(contactRef, 'messages');
+
+  try {
+    // 1. Delete all messages in the subcollection
+    console.log(`Deleting messages for ${phoneNumber}...`);
+    const messagesSnapshot = await getDocs(messagesRef);
+    const batch = writeBatch(db);
+    messagesSnapshot.docs.forEach((messageDoc) => {
+      batch.delete(messageDoc.ref);
+    });
+    await batch.commit();
+    console.log(`Successfully deleted ${messagesSnapshot.size} messages for ${phoneNumber}.`);
+
+    // 2. Delete the contact document itself
+    console.log(`Deleting contact document ${phoneNumber}...`);
+    await deleteDoc(contactRef);
+    console.log(`Successfully deleted contact document ${phoneNumber}.`);
+
+  } catch (error) {
+    console.error(`Error deleting contact ${phoneNumber}:`, error);
+    throw new Error(`Failed to delete contact ${phoneNumber}.`);
+  }
 };

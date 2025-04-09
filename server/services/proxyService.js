@@ -15,9 +15,15 @@ const apiClient = axios.create({
   },
 });
 
+// >>> DEBUG: Log after apiClient creation
+logger.debug('[proxyService] apiClient (axios instance) created.');
+// <<< END DEBUG
+
 // Add request interceptors for logging
 apiClient.interceptors.request.use(
   (config) => {
+    // >>> DEBUG: Simplified interceptor - just log URL/Method // REVERTED
+    /* // Original interceptor code restored
     const sanitizedConfig = {
       ...config,
       headers: { ...config.headers },
@@ -33,6 +39,7 @@ apiClient.interceptors.request.use(
       url: config.url,
       headers: sanitizedConfig.headers,
     });
+    */ // <<< END REVERT
     
     return config;
   },
@@ -89,6 +96,22 @@ const makeRequest = async ({ url, method = 'GET', data = {}, headers = {}, param
     // Create a clean headers object with all normalized headers
     const normalizedHeaders = normalizeHeaders({...headers, ...authHeaders});
     
+    // >>> DEBUG: Log the full config passed to apiClient // REMOVED
+    /*
+    const axiosConfig = {
+      url,
+      method,
+      data,
+      params,
+      headers: normalizedHeaders,
+    };
+    logger.debug('[makeRequest] Config passed to apiClient:', { axiosConfig }); 
+    */
+    // <<< END DEBUG
+
+    // >>> DEBUG: Add logging around apiClient call // REMOVE
+    // logger.debug('[makeRequest] BEFORE apiClient call', { url, method, service });
+    /*
     const response = await apiClient({
       url,
       method,
@@ -96,7 +119,19 @@ const makeRequest = async ({ url, method = 'GET', data = {}, headers = {}, param
       params,
       headers: normalizedHeaders,
     });
+    */
+    // logger.debug('[makeRequest] AFTER apiClient call');
+    // <<< END DEBUG
     
+    // Restore original call
+    const response = await apiClient({
+      url,
+      method,
+      data,
+      params,
+      headers: normalizedHeaders,
+    });
+
     return response.data;
   } catch (error) {
     // Specific handling for Google token errors

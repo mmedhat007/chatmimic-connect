@@ -1,10 +1,19 @@
+console.log('[DEBUG] googleOAuth.js executing...');
+
 const express = require('express');
+console.log('[DEBUG] googleOAuth.js: requiring express');
 const router = express.Router();
+console.log('[DEBUG] googleOAuth.js: requiring crypto');
 const crypto = require('crypto');
+console.log('[DEBUG] googleOAuth.js: requiring firebase-admin');
 const admin = require('firebase-admin');
+console.log('[DEBUG] googleOAuth.js: requiring axios');
 const axios = require('axios');
+console.log('[DEBUG] googleOAuth.js: requiring logger');
 const logger = require('./utils/logger');
+console.log('[DEBUG] googleOAuth.js: requiring auth middleware');
 const { requireAuth } = require('./middleware/auth');
+console.log('[DEBUG] googleOAuth.js: All requires finished.');
 
 // Firebase Admin initialization should be done in your main server file
 // and passed to this module
@@ -87,20 +96,39 @@ router.post('/exchange-token', async (req, res) => {
     const encryptedAccessToken = encryptData(access_token, encryptionKey);
     const encryptedRefreshToken = refresh_token ? encryptData(refresh_token, encryptionKey) : null;
     
-    // Store encrypted tokens in Firestore
-    await admin.firestore().doc(`Users/${uid}`).update({
-      'credentials.googleSheetsOAuth': {
-        accessToken: encryptedAccessToken,
-        refreshToken: encryptedRefreshToken,
-        expiresAt,
-        updatedAt: Date.now()
-      }
-    });
+    // Check if user document exists first
+    const userDoc = await admin.firestore().doc(`Users/${uid}`).get();
+    
+    if (!userDoc.exists) {
+      // Create the user document if it doesn't exist
+      await admin.firestore().doc(`Users/${uid}`).set({
+        uid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        credentials: {
+          googleSheetsOAuth: {
+            accessToken: encryptedAccessToken,
+            refreshToken: encryptedRefreshToken,
+            expiresAt,
+            updatedAt: Date.now()
+          }
+        }
+      });
+    } else {
+      // Update the existing document
+      await admin.firestore().doc(`Users/${uid}`).update({
+        'credentials.googleSheetsOAuth': {
+          accessToken: encryptedAccessToken,
+          refreshToken: encryptedRefreshToken,
+          expiresAt,
+          updatedAt: Date.now()
+        }
+      });
+    }
     
     res.status(200).json({ 
       success: true, 
-      expiresAt,
-      // Don't send the tokens back to the client
+      expiresAt
+      // No tokens sent back to client - removed for security
     });
     
   } catch (error) {

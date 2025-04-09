@@ -1,3 +1,5 @@
+console.log('[DEBUG] routes/googleSheets.js executing...');
+
 /**
  * Routes for Google Sheets operations
  */
@@ -14,6 +16,9 @@ const router = express.Router();
 /**
  * Check Google Sheets connection status
  * GET /api/google-sheets/status
+ * 
+ * Verifies if the user has a valid Google Sheets connection
+ * Protected route - requires authentication
  */
 router.get('/status', requireAuth, async (req, res) => {
   try {
@@ -76,6 +81,9 @@ router.get('/status', requireAuth, async (req, res) => {
 /**
  * Disconnect Google Sheets
  * POST /api/google-sheets/disconnect
+ * 
+ * Revokes access to Google Sheets and removes stored credentials
+ * Protected route - requires authentication
  */
 router.post('/disconnect', requireAuth, async (req, res) => {
   try {
@@ -121,8 +129,11 @@ router.post('/disconnect', requireAuth, async (req, res) => {
 });
 
 /**
- * Check the connection by making a test request to Google Sheets API
+ * Test Google Sheets connection
  * GET /api/google-sheets/test-connection
+ * 
+ * Makes a test request to the Google Sheets API to verify connectivity
+ * Protected route - requires authentication
  */
 router.get('/test-connection', requireAuth, async (req, res) => {
   try {
@@ -157,6 +168,70 @@ router.get('/test-connection', requireAuth, async (req, res) => {
       status: 'error',
       message: 'Failed to test Google Sheets connection',
       error: error.message
+    });
+  }
+});
+
+/**
+ * List user's Google Sheets
+ * GET /api/google-sheets/list
+ *
+ * Fetches a list of spreadsheets accessible by the user's connected account.
+ * Protected route - requires authentication
+ */
+router.get('/list', requireAuth, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    logger.info(`Fetching Google Sheets list for user ${uid}`);
+
+    // Get valid credentials (handles decryption and refresh)
+    const credentials = await googleService.getValidCredentials(uid);
+    if (!credentials || !credentials.access_token) {
+      logger.warn(`No valid Google credentials found for user ${uid} when listing sheets.`);
+      return res.status(401).json({
+        status: 'error',
+        message: 'No valid Google credentials found. Please reconnect.',
+      });
+    }
+
+    // Google Drive API call to list spreadsheets
+    const driveApiUrl = 'https://www.googleapis.com/drive/v3/files';
+    const queryParams = new URLSearchParams({
+      q: "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+      fields: 'files(id,name,createdTime)',
+      pageSize: 100, // Adjust as needed
+    }).toString();
+
+    logger.debug(`Calling Google Drive API for user ${uid}: ${driveApiUrl}?${queryParams}`);
+    const response = await axios.get(`${driveApiUrl}?${queryParams}`, {
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+      },
+    });
+
+    const files = response.data.files || [];
+    logger.info(`Successfully fetched ${files.length} sheets for user ${uid}`);
+
+    return res.json({
+      status: 'success',
+      data: {
+        files: files,
+      },
+    });
+  } catch (error) {
+    logger.error(`Error fetching Google Sheets list for user ${req.user.uid}:`, error.response?.data || error.message || error);
+    // Handle potential token errors specifically
+    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+        return res.status(401).json({
+            status: 'error',
+            message: 'Google API authentication failed. Please try reconnecting your Google account.',
+            error: error.response.data?.error?.message || 'Authentication error',
+        });
+    }
+    return res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch Google Sheets list',
+      error: error.message,
     });
   }
 });

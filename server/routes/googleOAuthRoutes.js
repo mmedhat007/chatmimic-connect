@@ -1,12 +1,61 @@
 /**
+ * Routes for Google OAuth authentication
+ */
+
+const express = require('express');
+const router = express.Router();
+const { requireAuth } = require('../middleware/auth');
+const admin = require('firebase-admin');
+const logger = require('../utils/logger');
+const googleService = require('../services/googleService');
+
+/**
  * Exchange token route - converts auth code to tokens
+ * POST /api/google-oauth/exchange-token
+ * 
+ * @authentication Optional
+ * @request
+ *   - code: Google authorization code
+ * 
+ * @response
+ *   Success:
+ *     {
+ *       "status": "success",
+ *       "data": {
+ *         "access_token": "ya29.a0...",
+ *         "expires_in": 3599,
+ *         "token_type": "Bearer",
+ *         "scope": "https://www.googleapis.com/auth/spreadsheets"
+ *       },
+ *       "meta": {
+ *         "responseTime": 123 // milliseconds
+ *       }
+ *     }
+ *   
+ *   Error:
+ *     {
+ *       "status": "error",
+ *       "message": "Error message",
+ *       "meta": {
+ *         "responseTime": 123 // milliseconds
+ *       }
+ *     }
  */
 router.post('/exchange-token', async (req, res) => {
+  const startTime = Date.now();
+
   try {
     const { code } = req.body;
     
     if (!code) {
-      return res.status(400).json({ error: 'Authorization code is required' });
+      const responseTime = Date.now() - startTime;
+      return res.status(400).json({ 
+        status: 'error',
+        message: 'Authorization code is required',
+        meta: {
+          responseTime
+        }
+      });
     }
     
     logger.info('Exchanging Google auth code for tokens');
@@ -41,25 +90,68 @@ router.post('/exchange-token', async (req, res) => {
       logger.warn('No user ID available, tokens not saved to database');
     }
     
+    const responseTime = Date.now() - startTime;
+    
     // Return tokens to client - access_token will be needed for API calls
     // Note: refresh_token should not be exposed in production environments
     res.json({
-      access_token: tokens.access_token,
-      expires_in: tokens.expires_in,
-      token_type: tokens.token_type || 'Bearer',
-      scope: tokens.scope,
-      refresh_token: tokens.refresh_token,  // Consider excluding in production
+      status: 'success',
+      data: {
+        access_token: tokens.access_token,
+        expires_in: tokens.expires_in,
+        token_type: tokens.token_type || 'Bearer',
+        scope: tokens.scope
+        // refresh_token removed for security
+      },
+      meta: {
+        responseTime
+      }
     });
   } catch (error) {
+    const responseTime = Date.now() - startTime;
     logger.error('Error exchanging token:', error);
-    res.status(500).json({ error: `Error refreshing token: ${error.message}` });
+    res.status(500).json({ 
+      status: 'error',
+      message: `Error exchanging token: ${error.message}`,
+      meta: {
+        responseTime
+      }
+    });
   }
 });
 
 /**
  * Refresh token route
+ * POST /api/google-oauth/refresh-token
+ * 
+ * @authentication Required
+ * @response
+ *   Success:
+ *     {
+ *       "status": "success",
+ *       "data": {
+ *         "access_token": "ya29.a0...",
+ *         "expires_in": 3599,
+ *         "token_type": "Bearer",
+ *         "scope": "https://www.googleapis.com/auth/spreadsheets"
+ *       },
+ *       "meta": {
+ *         "responseTime": 123 // milliseconds
+ *       }
+ *     }
+ *   
+ *   Error:
+ *     {
+ *       "status": "error",
+ *       "message": "Error message",
+ *       "meta": {
+ *         "responseTime": 123 // milliseconds
+ *       }
+ *     }
  */
 router.post('/refresh-token', requireAuth, async (req, res) => {
+  const startTime = Date.now();
+
   try {
     const userId = req.user.uid;
     
@@ -69,17 +161,41 @@ router.post('/refresh-token', requireAuth, async (req, res) => {
     const credentials = await googleService.getValidCredentials(userId);
     
     if (!credentials || !credentials.access_token) {
-      return res.status(401).json({ error: 'Google credentials not available' });
+      const responseTime = Date.now() - startTime;
+      return res.status(401).json({ 
+        status: 'error',
+        message: 'Google credentials not available',
+        meta: {
+          responseTime
+        }
+      });
     }
     
+    const responseTime = Date.now() - startTime;
+    
     res.json({
-      access_token: credentials.access_token,
-      expires_in: credentials.expires_in,
-      token_type: credentials.token_type || 'Bearer',
-      scope: credentials.scope
+      status: 'success',
+      data: {
+        access_token: credentials.access_token,
+        expires_in: credentials.expires_in,
+        token_type: credentials.token_type || 'Bearer',
+        scope: credentials.scope
+      },
+      meta: {
+        responseTime
+      }
     });
   } catch (error) {
+    const responseTime = Date.now() - startTime;
     logger.error(`Error refreshing token: ${error.message}`, error);
-    res.status(500).json({ error: `Failed to refresh token: ${error.message}` });
+    res.status(500).json({ 
+      status: 'error',
+      message: `Failed to refresh token: ${error.message}`,
+      meta: {
+        responseTime
+      }
+    });
   }
-}); 
+});
+
+module.exports = router; 

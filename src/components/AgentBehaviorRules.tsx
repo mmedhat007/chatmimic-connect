@@ -51,75 +51,72 @@ const predefinedRules = [
 ];
 
 const AgentBehaviorRules: React.FC<AgentBehaviorRulesProps> = ({ behaviorRules, onRulesChange }) => {
-  const [rules, setRules] = useState<BehaviorRule[]>(behaviorRules);
+  const [rules, setRules] = useState<BehaviorRule[]>([]);
   const [newRule, setNewRule] = useState('');
   const [newRuleDescription, setNewRuleDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setRules(behaviorRules);
+    if (JSON.stringify(behaviorRules) !== JSON.stringify(rules)) {
+      setRules(behaviorRules || []);
+    }
   }, [behaviorRules]);
 
   const handleAddPredefinedRule = (rule: BehaviorRule) => {
-    // Check if rule with this ID already exists
     if (!rules.some(r => r.id === rule.id)) {
-      const updatedRules = [...rules, { ...rule, enabled: true }];
-      setRules(updatedRules);
-      onRulesChange(updatedRules);
+      setRules(prevRules => [...prevRules, { ...rule, enabled: true }]);
     }
   };
 
   const handleAddCustomRule = () => {
     if (newRule.trim() === '') return;
-    
     const newRuleObject: BehaviorRule = {
       id: `rule-${Date.now()}`,
       rule: newRule,
       description: newRuleDescription,
       enabled: true,
     };
-    
-    const updatedRules = [...rules, newRuleObject];
-    setRules(updatedRules);
-    onRulesChange(updatedRules);
+    setRules(prevRules => [...prevRules, newRuleObject]);
     setNewRule('');
     setNewRuleDescription('');
   };
 
   const handleRemoveRule = (id: string) => {
-    const updatedRules = rules.filter(rule => rule.id !== id);
-    setRules(updatedRules);
-    onRulesChange(updatedRules);
+    setRules(prevRules => prevRules.filter(rule => rule.id !== id));
   };
 
   const handleToggleRule = (id: string) => {
-    const updatedRules = rules.map(rule => 
-      rule.id === id ? { ...rule, enabled: !rule.enabled } : rule
+    setRules(prevRules => 
+      prevRules.map(rule => 
+        rule.id === id ? { ...rule, enabled: !rule.enabled } : rule
+      )
     );
-    setRules(updatedRules);
-    onRulesChange(updatedRules);
   };
 
-  const saveRulesToSupabase = async (updatedRules: BehaviorRule[]) => {
+  const handleSaveChanges = async () => {
     const userUID = getCurrentUser();
     if (!userUID) {
-      toast.error('User not authenticated');
+      toast.error('User not authenticated. Cannot save rules.');
+      console.error('Save Behavior Rules failed: User not found.');
       return;
     }
 
     setSaving(true);
+    console.log('[AgentBehaviorRules] Saving rules:', rules);
     try {
-      await updateBehaviorRules(userUID, updatedRules);
-      toast.success('Behavior rules updated');
-    } catch (error) {
-      console.error('Error saving behavior rules:', error);
+      const result = await updateBehaviorRules(userUID, rules);
       
-      // Show a more detailed error message
+      if (result && result.success) {
+        toast.success('Behavior rules updated successfully!');
+      } else {
+        const errorMessage = result?.error?.message || 'Failed to update rules.';
+        console.error('Error saving behavior rules via service:', result?.error);
+        toast.error(`Failed to update behavior rules: ${errorMessage}`);
+      }
+    } catch (error) {
+      console.error('Unexpected error saving behavior rules:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast.error(`Failed to update behavior rules: ${errorMessage}`);
-      
-      // Revert to previous state if update failed
-      setRules(behaviorRules);
     } finally {
       setSaving(false);
     }
@@ -150,7 +147,6 @@ const AgentBehaviorRules: React.FC<AgentBehaviorRulesProps> = ({ behaviorRules, 
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {/* Active rules */}
         {rules.length > 0 ? (
           <div className="space-y-4 mb-6">
             <h3 className="text-sm font-medium text-gray-700">Active Rules</h3>
@@ -187,7 +183,6 @@ const AgentBehaviorRules: React.FC<AgentBehaviorRulesProps> = ({ behaviorRules, 
           </div>
         )}
 
-        {/* Suggested rules */}
         {unusedPredefinedRules.length > 0 && (
           <div className="mb-6">
             <h3 className="text-sm font-medium text-gray-700 mb-2">Suggested Rules</h3>
@@ -206,7 +201,6 @@ const AgentBehaviorRules: React.FC<AgentBehaviorRulesProps> = ({ behaviorRules, 
           </div>
         )}
 
-        {/* Add custom rule */}
         <div className="space-y-4 pt-4 border-t">
           <h3 className="text-sm font-medium text-gray-700">Add Custom Rule</h3>
           <div className="space-y-2">
@@ -240,7 +234,7 @@ const AgentBehaviorRules: React.FC<AgentBehaviorRulesProps> = ({ behaviorRules, 
 
         <div className="flex justify-end mt-6">
           <Button 
-            onClick={() => saveRulesToSupabase(rules)} 
+            onClick={handleSaveChanges} 
             disabled={saving} 
             className="flex items-center gap-2"
           >

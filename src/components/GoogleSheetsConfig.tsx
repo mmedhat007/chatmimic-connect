@@ -17,7 +17,8 @@ import {
   getAllSheetConfigs,
   getGoogleAuthStatus,
   authorizeGoogleSheets,
-  revokeGoogleAuth
+  revokeGoogleAuth,
+  checkGoogleSheetsConnection
 } from '../services/googleSheets';
 import { startWhatsAppGoogleSheetsIntegration } from '../services/whatsappGoogleIntegration';
 import { auth } from '../services/firebase';
@@ -90,49 +91,64 @@ const GoogleSheetsConfig: React.FC = () => {
   const [addTrigger, setAddTrigger] = useState<'first_message' | 'show_interest' | 'manual'>('first_message');
   const [autoUpdateFields, setAutoUpdateFields] = useState(true);
 
-  // Check if Google Sheets is connected and fetch sheets
+  // Check Google Sheets connection status, auth status, and fetch configs/sheets
   useEffect(() => {
-    const checkConnection = async () => {
+    const loadInitialData = async () => {
       setLoading(true);
-      try {
-        // Fetch user's Google Sheets
-        const sheets = await getUserSheets();
-        setUserSheets(sheets);
-        setIsConnected(sheets.length > 0);
-        
-        // Fetch saved configurations
-        const configs = await getAllSheetConfigs();
-        setSavedConfigs(configs);
-        
-        if (configs.length > 0) {
-          setActiveConfig(configs[0]);
-        }
-      } catch (error) {
-        console.error('Error checking Google Sheets connection:', error);
-        setIsConnected(false);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    checkConnection();
-  }, []);
-
-  // Check if user has authorized Google Sheets
-  useEffect(() => {
-    const checkGoogleAuth = async () => {
       setAuthLoading(true);
       try {
+        // Check general Google Auth status first (for UI buttons)
         const isAuthorized = await getGoogleAuthStatus();
         setIsGoogleAuthorized(isAuthorized);
+
+        // Check connection status via backend endpoint
+        const statusResult = await checkGoogleSheetsConnection();
+        setIsConnected(statusResult.connected);
+
+        if (statusResult.error) {
+          console.error('Error checking Google Sheets connection status:', statusResult.error);
+          toast.error(`Could not verify Google Sheets connection: ${statusResult.error}`);
+        }
+
+        // Fetch saved configurations from our backend/db regardless of connection status
+        const configs = await getAllSheetConfigs();
+        setSavedConfigs(configs);
+
+        if (configs.length > 0 && !activeConfig) { // Set default active config if none selected
+          setActiveConfig(configs[0]);
+        }
+
+        // Fetch user sheets list ONLY if the backend says we are connected
+        if (statusResult.connected) {
+          try {
+            // This call might still fail if the token becomes invalid between backend check and this call
+            const sheets = await getUserSheets(); 
+            setUserSheets(sheets);
+          } catch (sheetError) {
+             console.error('Error fetching user sheets list:', sheetError);
+             toast.error('Could not fetch list of your Google Sheets. Please try reconnecting.');
+             setUserSheets([]); // Clear sheets list on error
+          }
+        } else {
+           setUserSheets([]); // Clear sheets if not connected
+        }
+
       } catch (error) {
-        console.error('Error checking Google auth status:', error);
+        console.error('Error loading initial Google Sheets data:', error);
+        toast.error('Failed to load Google Sheets configuration data.');
+        setIsConnected(false); // Ensure disconnected state on general error
+        setIsGoogleAuthorized(false);
+        setUserSheets([]);
+        setSavedConfigs([]);
       } finally {
+        setLoading(false);
         setAuthLoading(false);
       }
     };
 
-    checkGoogleAuth();
+    loadInitialData();
+    // Dependencies: We want this to run once on mount. 
+    // Re-consider if activeConfig change should trigger reload. For now, keep empty.
   }, []);
 
   // Start the integration when component mounts

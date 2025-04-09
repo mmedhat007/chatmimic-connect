@@ -1,32 +1,124 @@
 // server/index.js
-require('dotenv').config({ path: '/home/denoteai-api-chat/credentials/.env' });
+
+// Explicitly load .env file using dotenv FIRST
+const pathForEnv = require('path'); // Use a different name to avoid conflict if path is required later
+const envPath = pathForEnv.resolve(__dirname, '../../credentials/.env'); 
+console.log(`[INFO] Attempting to load environment variables from: ${envPath}`);
+try {
+  require('dotenv').config({ path: envPath });
+  console.log(`[INFO] dotenv loaded environment variables from ${envPath}`);
+} catch (error) {
+  console.error(`[CRITICAL] Failed to load .env file from ${envPath}:`, error);
+  if (process.env.NODE_ENV === 'production') {
+      console.error('[CRITICAL] Exiting due to missing .env file.');
+      process.exit(1);
+  }
+}
+
+// Now require other modules
+console.log('[DEBUG] Requiring path...');
+const path = require('path'); 
+console.log('[DEBUG] path required.');
+console.log('[DEBUG] Requiring express...');
 const express = require('express');
+console.log('[DEBUG] express required.');
+console.log('[DEBUG] Requiring cors...');
 const cors = require('cors');
+console.log('[DEBUG] cors required.');
+console.log('[DEBUG] Requiring helmet...');
 const helmet = require('helmet');
+console.log('[DEBUG] helmet required.');
+console.log('[DEBUG] Requiring firebase-admin...');
 const admin = require('firebase-admin');
-const path = require('path');
+console.log('[DEBUG] firebase-admin required.');
+console.log('[DEBUG] Requiring express-rate-limit...');
+const rateLimit = require('express-rate-limit');
+console.log('[DEBUG] express-rate-limit required.');
+
+console.log('[DEBUG] index.js: Attempting to require googleOAuth...');
 const googleOAuthRoutes = require('./googleOAuth');
+console.log('[DEBUG] index.js: googleOAuth required successfully.');
+
+console.log('[DEBUG] index.js: Attempting to require proxyRoutes...');
 const proxyRoutes = require('./routes/proxyRoutes');
+console.log('[DEBUG] index.js: proxyRoutes required successfully.');
+
+console.log('[DEBUG] index.js: Attempting to require configRoutes...');
 const configRoutes = require('./routes/configRoutes');
+console.log('[DEBUG] index.js: configRoutes required successfully.');
+
+console.log('[DEBUG] index.js: Attempting to require googleSheetsRoutes...');
 const googleSheetsRoutes = require('./routes/googleSheets');
+console.log('[DEBUG] index.js: googleSheetsRoutes required successfully.');
+
+console.log('[DEBUG] index.js: Attempting to require logger...');
 const logger = require('./utils/logger');
+console.log('[DEBUG] index.js: logger required successfully.');
+
+// Validate required environment variables
+const requiredEnvVars = [
+  'FIREBASE_DATABASE_URL',
+  'GOOGLE_CLIENT_ID',
+  'GOOGLE_CLIENT_SECRET',
+  'OPENAI_API_KEY',
+  'GROQ_API_KEY',
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'TOKEN_ENCRYPTION_KEY'
+];
+
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+if (missingEnvVars.length > 0) {
+  // Use console.error for critical startup issues
+  console.error(`[CRITICAL] Missing required environment variables: ${missingEnvVars.join(', ')}`); 
+  logger.error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
+  
+  // Exit in production if env vars are missing
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[CRITICAL] Exiting due to missing environment variables in production.');
+    process.exit(1); // Exit explicitly
+  }
+}
+
+// const serviceAccountPath = path.join(__dirname, 'firebase-credentials.json'); // Old path
+const serviceAccountPath = path.resolve(__dirname, '../../credentials/firebase-credentials.json'); // Corrected relative path
 
 // Initialize Firebase Admin
 try {
+  // Explicitly use the service account key file
   admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
+    credential: admin.credential.cert(serviceAccountPath),
     databaseURL: process.env.FIREBASE_DATABASE_URL,
   });
-  logger.info('Firebase Admin SDK initialized successfully');
-  console.log('Firebase Admin SDK initialized successfully');
+  logger.info('Firebase Admin SDK initialized successfully using service account file.');
 } catch (error) {
-  logger.error('Error initializing Firebase Admin SDK:', error);
-  console.error('Error initializing Firebase Admin SDK:', error);
-  // Don't crash the server, allow it to start even if Firebase fails
-  // This allows you to debug other aspects of the server
+  console.error('[CRITICAL] Error initializing Firebase Admin SDK:', error);
+  logger.error('CRITICAL: Error initializing Firebase Admin SDK. Authentication will likely fail.', {
+    error: error.message,
+    errorCode: error.code,
+    stack: error.stack,
+    serviceAccountPath: serviceAccountPath // Log the path being used
+  });
+  
+  // Log existence check
+  try {
+      const fs = require('fs');
+      if (!fs.existsSync(serviceAccountPath)) {
+        console.error(`[CRITICAL] Service account key file not found at: ${serviceAccountPath}`);
+        logger.error(`Service account key file not found at: ${serviceAccountPath}`);
+      }
+  } catch (fsError) {
+       console.error('[CRITICAL] Error checking file existence:', fsError);
+  }
+  // Exit if Firebase init fails critically
+  console.error('[CRITICAL] Exiting due to Firebase initialization error.');
+  process.exit(1);
 }
 
 const app = express();
+// >>> NEW: Trust the first proxy hop (e.g., Nginx) - Moved earlier
+app.set('trust proxy', 1);
+
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -64,12 +156,61 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
 
+// Rate limiting
+const apiLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000, // 1 minute
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // Limit each IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  trustProxy: true,
+  message: {
+    status: 'error',
+    message: 'Too many requests, please try again later'
+  }
+});
+
+const embeddingsLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000, // 1 minute
+  max: parseInt(process.env.RATE_LIMIT_EMBEDDING_REQUESTS) || 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  trustProxy: true,
+  message: {
+    status: 'error',
+    message: 'Too many embedding requests, please try again later'
+  }
+});
+
+const extractLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000, // 1 minute
+  max: parseInt(process.env.RATE_LIMIT_EXTRACT_REQUESTS) || 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  trustProxy: true,
+  message: {
+    status: 'error',
+    message: 'Too many extraction requests, please try again later'
+  }
+});
+
+// Apply rate limiting to all requests
+app.use(apiLimiter);
+
+// Debug middleware to log all incoming requests in development
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`[DEBUG] Request received: ${req.method} ${req.originalUrl}`);
+    next();
+  });
+}
+
 // Logging middleware
 app.use((req, res, next) => {
   logger.info(`${req.method} ${req.path}`, {
     ip: req.ip,
     userAgent: req.headers['user-agent'],
-    query: req.query
+    query: req.query,
+    originalUrl: req.originalUrl
   });
   
   // Log response
@@ -78,7 +219,8 @@ app.use((req, res, next) => {
     logger.debug(`Response ${res.statusCode}`, {
       path: req.path,
       method: req.method,
-      status: res.statusCode
+      status: res.statusCode,
+      originalUrl: req.originalUrl
     });
     originalSend.call(this, data);
   };
@@ -110,24 +252,74 @@ app.use(async (req, res, next) => {
 });
 
 // Health check endpoint (no auth required)
+/**
+ * Server health check endpoint
+ * GET /api/health
+ * 
+ * @authentication Not required
+ * @response
+ *   Success:
+ *     {
+ *       "status": "success",
+ *       "data": {
+ *         "version": "1.0.0",
+ *         "env": "production"
+ *       },
+ *       "meta": {
+ *         "responseTime": 1 // milliseconds
+ *       }
+ *     }
+ */
 app.get('/api/health', (req, res) => {
+  const startTime = Date.now();
+  const responseTime = Date.now() - startTime;
+  
   res.status(200).json({
-    status: 'ok',
-    message: 'Server is running',
-    version: process.env.npm_package_version || '1.0.0',
-    timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV
+    status: 'success',
+    data: {
+      version: process.env.npm_package_version || '1.0.0',
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV
+    },
+    meta: {
+      responseTime
+    }
   });
 });
 
 // For direct health check without /api prefix
+/**
+ * Server health check endpoint (alternate path)
+ * GET /health
+ * 
+ * @authentication Not required
+ * @response
+ *   Success:
+ *     {
+ *       "status": "success",
+ *       "data": {
+ *         "version": "1.0.0",
+ *         "env": "production"
+ *       },
+ *       "meta": {
+ *         "responseTime": 1 // milliseconds
+ *       }
+ *     }
+ */
 app.get('/health', (req, res) => {
+  const startTime = Date.now();
+  const responseTime = Date.now() - startTime;
+  
   res.status(200).json({
-    status: 'ok',
-    message: 'Server is running',
-    version: process.env.npm_package_version || '1.0.0',
-    timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV
+    status: 'success',
+    data: {
+      version: process.env.npm_package_version || '1.0.0',
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV
+    },
+    meta: {
+      responseTime
+    }
   });
 });
 
@@ -136,15 +328,40 @@ app.get('/health', (req, res) => {
 app.use('/api/google-oauth', googleOAuthRoutes);
 app.use('/google-oauth', googleOAuthRoutes);
 
+// Apply specific rate limiters to proxy endpoints
+// Important: Order matters! More specific routes first
+app.use('/api/proxy/embeddings', embeddingsLimiter);
+app.use('/proxy/embeddings', embeddingsLimiter);
+
+app.use('/api/proxy/extract-data', extractLimiter);
+app.use('/proxy/extract-data', extractLimiter);
+
+// Mount the proxy routes
 app.use('/api/proxy', proxyRoutes);
 app.use('/proxy', proxyRoutes);
 
+// Config routes
 app.use('/api/config', configRoutes);
 app.use('/config', configRoutes);
 
-// New Google Sheets routes
+// Google Sheets routes
 app.use('/api/google-sheets', googleSheetsRoutes);
 app.use('/google-sheets', googleSheetsRoutes);
+
+// Explicitly define a 404 handler for API routes to give better errors
+app.use('/api/*', (req, res) => {
+  const startTime = Date.now();
+  const responseTime = Date.now() - startTime;
+  
+  logger.warn(`API endpoint not found: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({
+    status: 'error',
+    message: `Endpoint not found: ${req.method} ${req.originalUrl}`,
+    meta: {
+      responseTime
+    }
+  });
+});
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
@@ -159,11 +376,20 @@ if (process.env.NODE_ENV === 'production') {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
+  const startTime = Date.now();
+  const responseTime = Date.now() - startTime;
+  
   logger.error('Unhandled error:', err);
   res.status(500).json({
     status: 'error',
     message: 'An unexpected error occurred',
-    error: process.env.NODE_ENV === 'production' ? undefined : err.message
+    details: process.env.NODE_ENV === 'production' ? undefined : {
+      error: err.message,
+      stack: err.stack
+    },
+    meta: {
+      responseTime
+    }
   });
 });
 

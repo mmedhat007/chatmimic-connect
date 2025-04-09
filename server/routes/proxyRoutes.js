@@ -1,3 +1,5 @@
+console.log('[DEBUG] routes/proxyRoutes.js executing...');
+
 /**
  * Routes for secure proxy operations
  */
@@ -11,7 +13,7 @@ const {
   embeddingsValidators,
   extractDataValidators,
   matchDocumentsValidators
-} = require('../utils/validators/proxyValidators');
+} = require('../utils/validators/proxyValidators'); // UNCOMMENTED
 const proxyService = require('../services/proxyService');
 const { generateEmbeddings, extractDataWithGroq } = require('../services/aiService');
 const { saveEmbedding, matchDocuments } = require('../services/supabaseService');
@@ -19,10 +21,19 @@ const googleService = require('../services/googleService');
 
 const router = express.Router();
 
-/**
- * Generic proxy endpoint for external API calls
- * POST /api/proxy
- */
+// Middleware to log routes being accessed (for debugging)
+/* // Remove this debug middleware
+router.use((req, res, next) => {
+  logger.debug(`ProxyRoutes accessed: ${req.method} ${req.path}`, {
+    baseUrl: req.baseUrl,
+    originalUrl: req.originalUrl,
+    path: req.path
+  });
+  next();
+});
+*/
+
+// Generic proxy endpoint for external API calls
 router.post('/proxy', 
   requireAuth, 
   validate(proxyRequestValidators),
@@ -82,7 +93,9 @@ router.post('/proxy',
 
 /**
  * Generate embeddings endpoint
- * POST /api/embeddings
+ * POST /api/proxy/embeddings
+ * 
+ * This endpoint generates vector embeddings for text using OpenAI
  */
 router.post('/embeddings',
   requireAuth,
@@ -94,19 +107,21 @@ router.post('/embeddings',
       const { text, model, save, type, metadata } = req.body;
       
       if (!text || typeof text !== 'string') {
-        return res.status(400).json({ error: 'Text is required and must be a string' });
+        return res.status(400).json({ 
+          status: 'error',
+          message: 'Text is required and must be a string'
+        });
       }
       
-      // Log request for monitoring (excluding text content for privacy)
-      logger.info(`Embeddings request received - userId: ${req.user.uid}, textLength: ${text.length}`);
+      logger.info(`Embeddings request received - userId: ${req.user.uid}, textLength: ${text.length}`, {
+        originalUrl: req.originalUrl,
+        path: req.path
+      });
       
-      // Generate embeddings via AI service
       const embeddings = await generateEmbeddings(text, model);
       
-      // Save embeddings to database if requested
       if (save && embeddings) {
         await saveEmbedding(req.user.uid, text, embeddings, type || 'text', metadata || {});
-        
         logger.info(`Embeddings saved for userId: ${req.user.uid}`);
       }
       
@@ -144,7 +159,9 @@ router.post('/embeddings',
 
 /**
  * Extract data from text using AI
- * POST /api/extract-data
+ * POST /api/proxy/extract-data
+ * 
+ * This endpoint extracts structured data from text using Groq LLM
  */
 router.post('/extract-data',
   requireAuth,
@@ -195,7 +212,9 @@ router.post('/extract-data',
 
 /**
  * Match documents using embeddings
- * POST /api/match-documents
+ * POST /api/proxy/match-documents
+ * 
+ * This endpoint performs vector similarity search using embeddings
  */
 router.post('/match-documents',
   requireAuth,
@@ -214,13 +233,11 @@ router.post('/match-documents',
         limit
       });
       
-      // Generate embedding from text if not provided
       let queryEmbedding = embedding;
       if (!queryEmbedding && text) {
         queryEmbedding = await generateEmbeddings(text);
       }
       
-      // Match documents using the embedding
       const matches = await matchDocuments(req.user.uid, queryEmbedding, threshold, limit);
       
       const responseTime = Date.now() - startTime;
@@ -233,9 +250,9 @@ router.post('/match-documents',
       res.json({
         status: 'success',
         data: {
-          matches,
-          count: matches.length
-        },
+           matches,
+           count: matches.length
+         },
         meta: {
           responseTime,
           threshold,
@@ -259,19 +276,56 @@ router.post('/match-documents',
 
 /**
  * Route handler for proxy requests to external services
- * Requires proper authorization
+ * POST /api/proxy/:service/*
+ * 
+ * Dynamic endpoint that handles all other proxy requests to supported services
+ * 
+ * @authentication Required
+ * @request
+ *   - service: Service identifier (openai, groq, supabase, google, sheets)
+ *   - method: HTTP method to use (default: GET)
+ *   - data: Request body (optional)
+ *   - headers: Additional headers (optional)
+ *   - params: URL parameters (optional)
+ * 
+ * @response
+ *   Success:
+ *     {
+ *       "status": "success",
+ *       "data": {}, // Response data from external service
+ *       "meta": {
+ *         "responseTime": 123 // milliseconds
+ *       }
+ *     }
+ *   
+ *   Error:
+ *     {
+ *       "status": "error",
+ *       "message": "Error message",
+ *       "details": {}, // Additional error details
+ *       "meta": {
+ *         "responseTime": 123 // milliseconds
+ *       }
+ *     }
  */
 router.post('/:service/*', requireAuth, async (req, res) => {
+  const startTime = Date.now();
+  
   try {
     const { service } = req.params;
-    const endpoint = req.path.replace(`/proxy/${service}`, '');
+    const endpoint = req.path.replace(`/${service}`, '');
     const { method = 'GET', data, headers = {}, params } = req.body;
     
     // Validate the service
     const validServices = ['groq', 'openai', 'supabase', 'google', 'sheets'];
     if (!validServices.includes(service)) {
+      const responseTime = Date.now() - startTime;
       return res.status(400).json({ 
-        error: `Invalid service: ${service}. Valid services are: ${validServices.join(', ')}` 
+        status: 'error',
+        message: `Invalid service: ${service}. Valid services are: ${validServices.join(', ')}`,
+        meta: {
+          responseTime
+        }
       });
     }
     
@@ -285,13 +339,27 @@ router.post('/:service/*', requireAuth, async (req, res) => {
         // Get user's Google credentials from Firestore
         const googleCreds = await googleService.getCredentialsForUser(req.user.uid);
         if (!googleCreds || !googleCreds.access_token) {
-          return res.status(401).json({ error: 'Google API access token not available' });
+          const responseTime = Date.now() - startTime;
+          return res.status(401).json({ 
+            status: 'error',
+            message: 'Google API access token not available',
+            meta: {
+              responseTime
+            }
+          });
         }
         
         // Add authorization header with proper Bearer format
         headers.Authorization = `Bearer ${googleCreds.access_token}`;
       }
     }
+    
+    logger.info('Dynamic proxy request', {
+      userId: req.user.uid,
+      service,
+      endpoint,
+      method
+    });
     
     // Make the request via the proxy service
     const response = await proxyService.makeRequest({
@@ -304,16 +372,35 @@ router.post('/:service/*', requireAuth, async (req, res) => {
       userId: req.user.uid
     });
     
+    const responseTime = Date.now() - startTime;
+    logger.info('Dynamic proxy response success', {
+      userId: req.user.uid,
+      service,
+      endpoint,
+      responseTime
+    });
+    
     // Return the proxied response
-    res.json(response);
+    res.json({
+      status: 'success',
+      data: response,
+      meta: {
+        responseTime
+      }
+    });
   } catch (error) {
-    logger.error(`Proxy error for ${req.path}: ${error.message}`, error);
+    const responseTime = Date.now() - startTime;
+    logger.logError(error, req, 'Dynamic proxy request error');
     
     // Return appropriate error status code
     const statusCode = error.status || 500;
     res.status(statusCode).json({ 
-      error: error.message || 'Proxy request failed',
-      details: error.details || null
+      status: 'error',
+      message: error.message || 'Proxy request failed',
+      details: error.details || null,
+      meta: {
+        responseTime
+      }
     });
   }
 });

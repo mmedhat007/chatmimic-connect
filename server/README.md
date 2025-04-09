@@ -1,141 +1,161 @@
-# ChatMimic Connect - Server
+# ChatMimic Connect Server
 
-Secure backend for the ChatMimic Connect application, providing proxy endpoints for external services, user configuration management, and secure embedding generation.
+This directory contains the backend server for the ChatMimic Connect application. The server provides API endpoints for the frontend application to interact with various services including OpenAI, Groq, Google Sheets, and more through secure proxying.
+
+## API Standards
+
+All API endpoints in the ChatMimic Connect application follow these standards:
+
+### Endpoint Path Conventions
+
+- Primary format: `/api/[category]/[endpoint]` (preferred for API calls)
+- Alternative format: `/[category]/[endpoint]` (supported for backward compatibility)
+
+### Authentication
+
+Most endpoints require authentication using Firebase Authentication. Include a Firebase ID token in the Authorization header:
+
+```
+Authorization: Bearer [firebase_id_token]
+```
+
+### Standard Response Format
+
+All API responses follow this standard format:
+
+**Success Response**:
+```json
+{
+  "status": "success",
+  "data": { ... },
+  "meta": {
+    "responseTime": 123  // milliseconds
+  }
+}
+```
+
+**Error Response**:
+```json
+{
+  "status": "error",
+  "message": "Error message",
+  "details": { ... },  // Optional additional error details
+  "meta": {
+    "responseTime": 123  // milliseconds
+  }
+}
+```
+
+### Documentation Format
+
+All API route handlers should be documented using the following format:
+
+```javascript
+/**
+ * Route description
+ * METHOD /api/path/to/endpoint
+ * 
+ * @authentication Required/Optional/Not required
+ * @request
+ *   - paramName: Description (required/optional)
+ *   - anotherParam: Description (required/optional)
+ * 
+ * @response
+ *   Success:
+ *     {
+ *       "status": "success",
+ *       "data": {
+ *         // Example response data
+ *       },
+ *       "meta": {
+ *         "responseTime": 123 // milliseconds
+ *       }
+ *     }
+ *   
+ *   Error:
+ *     {
+ *       "status": "error",
+ *       "message": "Error message",
+ *       "meta": {
+ *         "responseTime": 123 // milliseconds
+ *       }
+ *     }
+ */
+```
+
+## Project Structure
+
+- `routes/`: API route handlers
+- `services/`: Business logic and external service integrations
+- `middleware/`: Express middleware (auth, validation, etc.)
+- `utils/`: Utility functions and helpers
+- `config/`: Configuration files
+- `index.js`: Main server entry point
 
 ## Features
 
 - **Secure Proxy API**: Handle external API calls without exposing credentials to the client
 - **Firebase Authentication**: Protect sensitive endpoints with Firebase Auth
+- **Google OAuth**: Integration with Google services, particularly Google Sheets
 - **Input Validation**: Comprehensive validation and sanitization for all inputs
 - **Logging**: Detailed logging with PII redaction
 - **Error Handling**: Standardized error responses with appropriate status codes
 
-## API Endpoints
+## Comprehensive API Documentation
 
-### Proxy API
+For a complete list of all available API endpoints, refer to the [API_ENDPOINTS.md](./API_ENDPOINTS.md) file.
 
-#### Generic Proxy
-- **POST** `/api/proxy/proxy`
-- Proxies requests to approved external services
-- Requires authentication
-- Request Body:
-  ```json
-  {
-    "endpoint": "https://api.example.com/resource",
-    "service": "openai|groq|supabase",
-    "method": "GET|POST|PUT|DELETE",
-    "data": {},
-    "headers": {},
-    "params": {}
-  }
-  ```
+## Error Handling
 
-#### Generate Embeddings
-- **POST** `/api/proxy/embeddings`
-- Generates text embeddings using OpenAI's API
-- Requires authentication
-- Request Body:
-  ```json
-  {
-    "text": "Text to generate embeddings for",
-    "model": "text-embedding-3-small",
-    "save": false,
-    "type": "document",
-    "metadata": {}
-  }
-  ```
+All API endpoints should include proper error handling and logging. Use the `logger` utility for consistent logging format:
 
-#### Extract Data
-- **POST** `/api/proxy/extract-data`
-- Extracts structured data from text using Groq LLM
-- Requires authentication
-- Request Body:
-  ```json
-  {
-    "message": "Text to extract data from",
-    "fields": [
-      {
-        "name": "customerName",
-        "type": "string"
-      },
-      {
-        "name": "orderDate",
-        "type": "date"
-      }
-    ],
-    "model": "deepseek-r1-distill-llama-70b"
-  }
-  ```
-
-#### Match Documents
-- **POST** `/api/proxy/match-documents`
-- Finds similar documents using vector similarity
-- Requires authentication
-- Request Body:
-  ```json
-  {
-    "text": "Query text",
-    "embedding": [0.1, 0.2, ...],  // Alternative to text
-    "threshold": 0.7,
-    "limit": 5
-  }
-  ```
-
-### Configuration API
-
-#### Save Configuration
-- **POST** `/api/config`
-- Saves user configuration to Supabase
-- Requires authentication
-- Request Body:
-  ```json
-  {
-    "name": "Default Configuration",
-    "behaviorRules": [
-      {
-        "rule": "Be helpful and concise",
-        "description": "Provide helpful answers without unnecessary text"
-      }
-    ],
-    "isActive": true,
-    "settings": {
-      "temperature": 0.7,
-      "maxTokens": 2000
+```javascript
+try {
+  // API logic here
+} catch (error) {
+  const responseTime = Date.now() - startTime;
+  logger.logError(error, req, 'Error description');
+  
+  res.status(500).json({
+    status: 'error',
+    message: error.message || 'Error description',
+    meta: {
+      responseTime
     }
-  }
-  ```
-
-#### Get Configuration
-- **GET** `/api/config`
-- Retrieves user configuration from Supabase
-- Requires authentication
+  });
+}
+```
 
 ## Environment Variables
 
-Create a `.env` file with the following variables:
+Create a `.env` file in the root directory with the following variables:
 
 ```
 PORT=3000
 NODE_ENV=development|production
 
 # Firebase
-FIREBASE_DATABASE_URL=
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_CLIENT_EMAIL=your-firebase-client-email
+FIREBASE_PRIVATE_KEY=your-firebase-private-key
+FIREBASE_DATABASE_URL=your-firebase-database-url
 
 # Google OAuth
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=
-TOKEN_ENCRYPTION_KEY=
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=your-google-redirect-uri
+TOKEN_ENCRYPTION_KEY=your-token-encryption-key
 
 # OpenAI
-OPENAI_API_KEY=
+OPENAI_API_KEY=your-openai-api-key
 
 # Groq
-GROQ_API_KEY=
+GROQ_API_KEY=your-groq-api-key
 
 # Supabase
-SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_URL=your-supabase-url
+SUPABASE_KEY=your-supabase-key
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 
 # Security
 CORS_ORIGIN=http://localhost:8080
@@ -143,28 +163,26 @@ CORS_ORIGIN=http://localhost:8080
 
 ## Development
 
-1. Install dependencies:
-   ```
-   npm install
-   ```
+```bash
+# Install dependencies
+npm install
 
-2. Start development server:
-   ```
-   npm run dev
-   ```
+# Start the development server
+npm run dev
 
-3. Run tests:
-   ```
-   npm test
-   ```
+# Build for production
+npm run build
+
+# Start the production server
+npm start
+
+# Run tests
+npm test
+```
 
 ## Security
 
 See [Backend Security](../docs/backend_security.md) for details on the security features implemented in this server.
-
-## API Documentation
-
-For more detailed API documentation, see [API Reference](../docs/api_reference.md).
 
 ## License
 

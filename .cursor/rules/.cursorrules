@@ -1,3 +1,6 @@
+
+# Your rule content
+
 # ChatMimic Connect - Project Intelligence
 
 This file serves as Cursor's learning journal, capturing key insights and project-specific intelligence.
@@ -55,15 +58,36 @@ This file serves as Cursor's learning journal, capturing key insights and projec
 - Health check endpoint at `/api/health`
 - Environment variables management
 
+
 ## Known Issues and Troubleshooting
 
 - SSL certificate validation errors when accessing API directly
 - Google API authorization token refresh handling
 - Firebase Admin SDK initialization error handling
+// NOTE: Specific issue details moved to project_documentation/7-troubleshooting/common_issues.md
 
 ## Project-Specific Patterns
 
 - API request proxying for external services
 - Bearer token standardization for authorization headers
 - Consistent error handling and logging patterns
-- Google API credential management 
+- Google API credential management
+- **Behavior Rules Save Separation**: Behavior Rules tab has its own save mechanism (`AgentBehaviorRules.tsx` -> `updateBehaviorRules` service) to prevent unnecessary embedding updates. Main config save excludes `behavior_rules`.
+- **Regular Documentation Updates**: Regularly update project documentation (`project_documentation/` folder, `API_ENDPOINTS.md`, etc.) to reflect significant changes, fixes, and learned patterns.
+- **Server Startup Debugging Process**: When encountering server startup crashes (esp. systemd restart loops):
+    1. Check systemd logs (`journalctl`).
+    2. If logs are unhelpful, attempt manual execution (`node index.js`) as the service user with exported env vars.
+    3. If still unclear, add granular `console.log` statements around `require` calls and initialization code, starting from `index.js` and moving into required modules until the crashing line is found.
+    4. Common culprits: Missing dependencies (`npm install --save <pkg>`), incorrect file paths (`path.resolve`), env var loading order (`dotenv` at top), module initialization errors.
+
+
+
+
+always check teh project_documentation folder files (every single file in it) before making changes
+Never use browser-native alerts (alert, confirm, prompt).
+Instead, always use custom UI popups/modals styled to match the app's design system. This ensures a consistent user experience and avoids disruptive, unstyled browser dialogs.
+
+
+
+
+

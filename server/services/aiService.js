@@ -14,7 +14,7 @@ const generateEmbeddings = async (text) => {
   try {
     logger.debug('Generating embeddings', { textLength: text.length });
     
-    const response = await makeRequest({
+    const requestOptions = {
       url: 'https://api.openai.com/v1/embeddings',
       method: 'POST',
       service: 'openai',
@@ -22,9 +22,24 @@ const generateEmbeddings = async (text) => {
         input: text,
         model: 'text-embedding-3-small',
       },
-    });
+    };
+    logger.debug('[aiService] Calling makeRequest with options:', { requestOptions });
     
-    if (!response.data || !response.data[0] || !response.data[0].embedding) {
+    let response;
+    try {
+      response = await makeRequest(requestOptions);
+    } catch (innerError) {
+      logger.error('[aiService] Error caught IMMEDIATELY from makeRequest call:', { 
+        error: innerError, 
+        message: innerError.message, 
+        stack: innerError.stack,
+        ...(typeof innerError === 'object' && innerError !== null ? innerError : {})
+      });
+      throw innerError; 
+    }
+    
+    if (!response || !response.data || !response.data[0] || !response.data[0].embedding) {
+      logger.error('[aiService] Invalid embedding response format received', { responseData: response });
       throw new Error('Invalid embedding response format');
     }
     
@@ -34,7 +49,7 @@ const generateEmbeddings = async (text) => {
     
     return response.data[0].embedding;
   } catch (error) {
-    logger.error('Error generating embeddings', {
+    logger.error('Error generating embeddings (outer catch)', {
       error: error.message,
       service: 'openai',
     });

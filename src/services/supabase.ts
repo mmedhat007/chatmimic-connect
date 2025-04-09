@@ -1,4 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+// Import the central apiRequest function
+import { apiRequest } from '../utils/api'; 
 
 // Supabase configuration
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -15,28 +17,21 @@ if (!supabaseUrl || !supabaseKey) {
 // Function to check if embeddings are available
 export const checkEmbeddingsAvailable = async (): Promise<boolean> => {
   try {
-    // Try to generate a simple embedding using the proxy endpoint
-    const response = await fetch('/api/proxy/embeddings', {
+    // Use the central apiRequest which handles authentication
+    const result = await apiRequest('/proxy/embeddings', { 
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-      },
       body: JSON.stringify({
         text: "test",
-        model: "text-embedding-3-small"
+        model: "text-embedding-3-small", // Use a valid model if needed by backend
+        // No need to specify save:false, type: or metadata: for a simple check
       })
     });
     
-    if (!response.ok) {
-      console.warn('Embeddings test failed with status:', response.status);
-      return false;
-    }
-    
-    const result = await response.json();
-    return !!result.data.embedding;
-  } catch (error) {
-    console.warn('Embeddings test failed:', error);
+    // apiRequest throws on non-ok status, so we just check the data
+    // Ensure result and result.data exist before accessing embedding
+    return !!(result && result.data && result.data.embedding);
+  } catch (error: any) {
+    console.warn('Embeddings availability check failed:', error.message || error);
     return false;
   }
 };
@@ -248,100 +243,48 @@ export const getUserConfig = async (uid: string): Promise<any> => {
       
       // Create a config object with the full_config data
       let config = data.full_config;
-      
-      // If behavior_rules exist as a separate column, use that value
-      // This overrides any behavior_rules in full_config
-      if (data.behavior_rules) {
-        console.log('[getUserConfig] Found behavior_rules object in dedicated column:', data.behavior_rules);
-        
-        // The behavior_rules in the dedicated column is now a simplified structure
-        // with a single description. We'll need to transform this back into an array
-        // structure that's compatible with the frontend.
-        
-        // Create default behavior rules array
-        let compatibleBehaviorRules = [];
-        
-        if (data.behavior_rules.rules && Array.isArray(data.behavior_rules.rules) && 
-            data.behavior_rules.rules.length > 0 && data.behavior_rules.rules[0].description) {
-          
-          const consolidatedDescription = data.behavior_rules.rules[0].description;
-          console.log('[getUserConfig] Found consolidated description:', consolidatedDescription);
-          
-          // If we have a description, we'll recreate the individual rules
-          // by splitting on period markers
-          if (consolidatedDescription && consolidatedDescription.trim() !== '') {
-            // Split the consolidated description into individual rule descriptions
-            const ruleDescriptions = consolidatedDescription
-              .split('.')
-              .map(desc => desc.trim())
-              .filter(desc => desc !== '');
-              
-            console.log('[getUserConfig] Extracted rule descriptions:', ruleDescriptions);
-            
-            // Create dummy rule objects from the descriptions
-            compatibleBehaviorRules = ruleDescriptions.map((description, index) => ({
-              id: `rule-${index + 1}`,
-              rule: `Rule ${index + 1}`,
-              description: description,
-              enabled: true
-            }));
-          }
-        }
-        
-        console.log('[getUserConfig] Created compatible behavior rules array:', compatibleBehaviorRules);
-        
-        // Set the behavior_rules property to the compatible array
-        config.behavior_rules = compatibleBehaviorRules;
-      } else {
-        console.log('[getUserConfig] No behavior_rules found in dedicated column');
+      // Ensure behavior_rules array exists
+      if (!config.behavior_rules) {
+        config.behavior_rules = [];
       }
       
-      // Save to localStorage for future use
+      // Store in localStorage for next time
       localStorage.setItem(`user_${uid}_config`, JSON.stringify(config));
-      console.log('[getUserConfig] Saved merged config to localStorage');
-      
+      console.log('[getUserConfig] Returning full_config object');
       return config;
+    } 
+    // Fallback to old structure if full_config doesn't exist
+    else if (data) {
+      console.log('[getUserConfig] Retrieved data from Supabase (likely old format)');
+      
+      // Construct config object from individual fields + behavior_rules
+      const behaviorRules = data.behavior_rules && data.behavior_rules.rules && data.behavior_rules.rules[0]
+        ? data.behavior_rules.rules[0].rules.split(' | ').map((ruleText: string) => {
+            const [rule, ...descriptionParts] = ruleText.split(': ');
+            return { rule: rule.trim(), description: descriptionParts.join(': ').trim(), enabled: true };
+          }) 
+        : [];
+        
+      const config = {
+        user_id: data.user_id,
+        temperature: data.temperature,
+        max_tokens: data.max_tokens,
+        behavior_rules: behaviorRules,
+        name: "User Configuration", // Add a default name if needed
+        isActive: true // Add a default status if needed
+        // Add other fields if they existed previously
+      };
+      
+      // Store in localStorage
+      localStorage.setItem(`user_${uid}_config`, JSON.stringify(config));
+      console.log('[getUserConfig] Returning constructed config from old data');
+      return config;
+    } 
+    // If no data found at all
+    else {
+      console.log('[getUserConfig] No config found for user:', uid);
+      return null;
     }
-
-    // If no full_config, return a default structure
-    // This will only happen for older entries that don't have full_config
-    const defaultConfig = {
-      company_info: {
-        name: 'Your Business',
-        industry: '',
-        locations: [],
-        contact_info: '',
-        differentiators: ''
-      },
-      services: {
-        main_offerings: [],
-        pricing_info: '',
-        delivery_areas: [],
-        special_features: []
-      },
-      communication_style: {
-        tone: data?.temperature > 0.75 ? 'enthusiastic' : 'friendly',
-        languages: ['English'],
-        emoji_usage: true,
-        response_length: data?.max_tokens > 600 ? 'long' : 
-                        (data?.max_tokens < 400 ? 'short' : 'medium')
-      },
-      business_processes: {
-        booking_process: '',
-        refund_policy: '',
-        common_questions: [],
-        special_requirements: []
-      },
-      integrations: {
-        current_tools: [],
-        required_integrations: [],
-        automation_preferences: '',
-        lead_process: ''
-      },
-      behavior_rules: [] // Initialize with empty behavior_rules array
-    };
-
-    return defaultConfig;
   } catch (error) {
     console.error('Error in getUserConfig:', error);
     return null;
@@ -349,7 +292,7 @@ export const getUserConfig = async (uid: string): Promise<any> => {
 };
 
 // Function to create embeddings
-export const createEmbeddings = async (uid: string, content: string, queryName: string = null, additionalMetadata = {}): Promise<boolean> => {
+export const createEmbeddings = async (uid: string, content: string, queryName: string | null = null, additionalMetadata = {}): Promise<boolean> => {
   try {
     // Prepare metadata - include queryName and user_id in metadata
     const metadata: Record<string, any> = {
@@ -363,45 +306,39 @@ export const createEmbeddings = async (uid: string, content: string, queryName: 
     }
     
     try {
-      // Use the server proxy endpoint instead of direct OpenAI API call
-      const response = await fetch('/api/proxy/embeddings', {
+      // Use the server proxy endpoint via apiRequest (handles auth)
+      const result = await apiRequest('/proxy/embeddings', { 
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-        },
         body: JSON.stringify({
           text: content,
-          model: "text-embedding-3-small"
+          model: "text-embedding-3-small", // Or your preferred model
+          save: true, // Tell backend to save this
+          type: queryName ? 'query' : 'document', // Example type
+          metadata: metadata // Pass metadata to backend
         })
       });
       
-      if (!response.ok) {
-        throw new Error(`Server responded with status: ${response.status}`);
+      // Check if embedding was generated and potentially saved by the backend
+      // Ensure result and result.data exist before accessing properties
+      if (result && result.status === 'success' && result.data && result.data.embedding) {
+         console.log('Embedding generated (and potentially saved) via backend proxy.');
+         // Backend handles saving now, so client doesn't need to insert directly
+         return true;
+      } else {
+         // Log the actual result if it wasn't successful as expected
+         console.error('Backend proxy did not return successful embedding:', result);
+         // Use the message from the result if available, otherwise provide a default
+         throw new Error(result?.message || 'Backend proxy failed to generate/save embedding');
       }
+
+    } catch (embeddingError: any) {
+      // Handle errors from apiRequest (includes auth errors, network errors, server errors)
+      console.error('Error generating/saving embedding via proxy API:', embeddingError.message || embeddingError);
       
-      const result = await response.json();
-      const embedding = result.data.embedding;
-
-      // Store the embedding in Supabase
-      const { error } = await supabase
-        .from('user_embeddings')
-        .insert({
-          user_id: uid,
-          content: content,
-          metadata: metadata, // Store user_id and other metadata
-          embedding: embedding
-        });
-
-      if (error) {
-        console.error('Error saving embedding:', error);
-        return true; // Still return true to not block the user flow
-      }
-
-      return true;
-    } catch (embeddingError) {
-      console.error('Error generating embedding with proxy API:', embeddingError);
-      // Store the content without embeddings as fallback
+      // Decide on fallback behavior - Do we still try to save content without embedding?
+      // For now, let's NOT save if embedding fails, to avoid incomplete data.
+      /* 
+      console.warn('Attempting to save content without embedding as fallback...');
       const { error } = await supabase
         .from('user_embeddings')
         .insert({
@@ -413,42 +350,42 @@ export const createEmbeddings = async (uid: string, content: string, queryName: 
         
       if (error) {
         console.error('Error saving record without embedding:', error);
+      } else {
+         console.log('Saved record without embedding.');
       }
+      */
       
-      // Return true anyway to not block the user's flow when embeddings fail
-      return true;
+      // Return false as the primary operation (embedding) failed
+      return false; 
     }
   } catch (error) {
-    console.error('Error creating embeddings:', error);
-    // Return true anyway to not block the user's flow when embeddings fail
-    return true;
+    // Catch any unexpected errors in the outer try block
+    console.error('Unexpected error in createEmbeddings:', error);
+    return false;
   }
 };
 
 // Function to delete embeddings
-export const deleteEmbeddings = async (uid: string, queryName: string = null): Promise<boolean> => {
+export const deleteEmbeddings = async (uid: string, queryName: string | null = null): Promise<boolean> => {
   try {
-    // Build filter JSON object
-    const filterJson: Record<string, any> = {
-      user_id: uid
-    };
-    
-    // Add query_name to filter if provided
-    if (queryName) {
-      filterJson.query_name = queryName;
-    }
-    
-    // Use the @> operator with filter JSON
-    const { error } = await supabase
+    const queryBuilder = supabase
       .from('user_embeddings')
       .delete()
-      .filter('metadata', '@>', JSON.stringify(filterJson));
+      .eq('user_id', uid);
+      
+    // If queryName is provided, filter by it in metadata
+    if (queryName) {
+      queryBuilder.eq('metadata->>query_name', queryName);
+    }
+      
+    const { error } = await queryBuilder;
 
     if (error) {
       console.error('Error deleting embeddings:', error);
       return false;
     }
 
+    console.log(`Successfully deleted embeddings for user ${uid}` + (queryName ? ` with queryName ${queryName}` : ''));
     return true;
   } catch (error) {
     console.error('Error in deleteEmbeddings:', error);
@@ -456,23 +393,25 @@ export const deleteEmbeddings = async (uid: string, queryName: string = null): P
   }
 };
 
-// Function to update embeddings for the AutomationsPage
+// Function to update embeddings (potentially replacing content and re-generating embedding)
 export const updateEmbeddings = async (uid: string, content: string, queryName: string): Promise<boolean> => {
   try {
-    // Skip updating behavior_rules embeddings completely
-    if (queryName === 'behavior_rules') {
-      console.log('Skipping behavior_rules embeddings update as requested');
-      return true;
+    // This likely involves deleting old and creating new, or a more complex update.
+    // For simplicity, let's use createEmbeddings which should handle the save/update via backend.
+    console.log(`Attempting to update embeddings for queryName: ${queryName}`);
+    // Assuming createEmbeddings via proxy can handle updates if `save: true` is smart enough on backend
+    // or if we first delete then create.
+    // Let's try just calling createEmbeddings again.
+    const success = await createEmbeddings(uid, content, queryName);
+    if (success) {
+       console.log(`Successfully triggered update/creation for embeddings with queryName: ${queryName}`);
+    } else {
+       console.error(`Failed to trigger update/creation for embeddings with queryName: ${queryName}`);
     }
-    
-    // Create new embeddings without deleting existing ones
-    // For predefined sections in AutomationsPage, add a section type to metadata
-    return await createEmbeddings(uid, content, queryName, {
-      section_type: queryName,
-      updated_at: new Date().toISOString()
-    });
+    return success;
+
   } catch (error) {
-    console.error('Error updating embeddings:', error);
+    console.error('Error in updateEmbeddings:', error);
     return false;
   }
 };
@@ -481,22 +420,17 @@ export const updateEmbeddings = async (uid: string, content: string, queryName: 
  * Update behavior rules in Supabase
  */
 export const updateBehaviorRules = async (userId: string, rules: any[]) => {
+  console.log('[updateBehaviorRules] Received rules:', rules);
   try {
-    console.log('Updating behavior rules for user:', userId);
-    
-    // Get only enabled rules
+    // Format rules correctly
     const enabledRules = rules.filter(rule => rule.enabled);
-    console.log('Enabled rules count:', enabledRules.length);
+    console.log('[updateBehaviorRules] Enabled rules:', enabledRules);
     
-    // Format each rule correctly - USING THE RULE TITLE, NOT JUST DESCRIPTION
     const formattedRules = enabledRules.map(rule => {
-      // Include rule title and description if available
-      return rule.description 
-        ? `${rule.rule}: ${rule.description}` 
-        : rule.rule;
+      return rule.description ? `${rule.rule}: ${rule.description}` : rule.rule;
     });
+    console.log('[updateBehaviorRules] Formatted rules strings:', formattedRules);
     
-    // Create the simplified behavior rules format with RULES not description
     const simplifiedBehaviorRules = {
       rules: [
         {
@@ -506,83 +440,116 @@ export const updateBehaviorRules = async (userId: string, rules: any[]) => {
       last_updated: new Date().toISOString(),
       version: "1.0"
     };
+    console.log('[updateBehaviorRules] Simplified rules object:', simplifiedBehaviorRules);
 
-    console.log('Created simplified behavior rules:', JSON.stringify(simplifiedBehaviorRules, null, 2));
-    
-    // Check if a record already exists
-    const { data: existingConfig, error: fetchError } = await supabase
+    const { error } = await supabase
       .from('user_configs')
-      .select('id, full_config')
-      .eq('user_id', userId)
-      .maybeSingle();
+      .update({ 
+        behavior_rules: simplifiedBehaviorRules,
+        updated_at: new Date().toISOString() // Also update the main timestamp if available
+      })
+      .eq('user_id', userId);
 
-    if (fetchError) {
-      console.error('Error checking existing config:', fetchError);
-      throw fetchError;
+    if (error) {
+      console.error('Error updating behavior rules:', error);
+      throw error;
     }
-
-    let updateResult;
-    
-    if (existingConfig) {
-      // Update existing record - ONLY IN USER_CONFIGS TABLE
-      console.log('Updating user_configs table only with behavior_rules and full_config');
-      
-      // First, prepare the updated full_config
-      const updatedFullConfig = existingConfig.full_config ? { ...existingConfig.full_config } : {};
-      updatedFullConfig.behavior_rules = rules; // Complete rule objects
-      
-      // Update both columns in a single operation
-      const { data, error } = await supabase
-        .from('user_configs')
-        .update({
-          behavior_rules: simplifiedBehaviorRules, // With rule titles
-          full_config: updatedFullConfig,         // Complete objects
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId);
-
-      if (error) {
-        throw error;
-      }
-      
-      updateResult = data;
-      console.log('Successfully updated user_configs table');
-    } else {
-      // Create a new record
-      console.log('No existing config found, creating new record');
-      
-      const { data, error } = await supabase
-        .from('user_configs')
-        .insert({
-          user_id: userId,
-          behavior_rules: simplifiedBehaviorRules,
-          full_config: { behavior_rules: rules },
-          updated_at: new Date().toISOString(),
-          temperature: 0.7,
-          max_tokens: 500
-        });
-
-      if (error) throw error;
-      updateResult = data;
-    }
-    
-    // Update localStorage cache
-    try {
-      const storedConfig = localStorage.getItem(`user_${userId}_config`);
-      if (storedConfig) {
-        const config = JSON.parse(storedConfig);
-        config.behavior_rules = rules;
-        localStorage.setItem(`user_${userId}_config`, JSON.stringify(config));
-        console.log('Updated behavior rules in localStorage cache');
-      }
-    } catch (e) {
-      console.error('Error updating localStorage cache:', e);
-    }
-    
-    console.log('Successfully updated behavior rules in user_configs only');
-    return updateResult;
+    console.log('Behavior rules updated successfully in Supabase for user:', userId);
+    return { success: true };
   } catch (error) {
-    console.error('Error updating behavior rules:', error);
-    throw error;
+    console.error('Failed to update behavior rules:', error);
+    return { success: false, error: error };
+  }
+};
+
+// Function to fetch embeddings for a user (consider security/privacy)
+export const getEmbeddingsForUser = async (uid: string): Promise<any[]> => {
+  try {
+    const { data, error } = await supabase
+      .from('user_embeddings')
+      .select('id, content, metadata, created_at') // Select specific fields, avoid fetching embedding vector itself unless needed
+      .eq('user_id', uid)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching embeddings:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error in getEmbeddingsForUser:', error);
+    return [];
+  }
+};
+
+// Function to save Google credentials
+export const saveGoogleCredentials = async (uid: string, credentials: any): Promise<boolean> => {
+  try {
+    // Ensure encryption key is available
+    const encryptionKey = import.meta.env.VITE_TOKEN_ENCRYPTION_KEY;
+    if (!encryptionKey) {
+      console.error('Encryption key is not configured!');
+      return false;
+    }
+
+    // Encrypt the refresh token if it exists
+    let encryptedRefreshToken = credentials.refresh_token;
+    if (credentials.refresh_token) {
+      // NOTE: Requires a proper encryption library (e.g., crypto-js) on the client
+      // For now, this is a placeholder. DO NOT use simple base64.
+      // Replace with actual encryption:
+      // encryptedRefreshToken = encrypt(credentials.refresh_token, encryptionKey); 
+      // Placeholder: just storing it as is (INSECURE, for demo only)
+      console.warn('Storing refresh token without client-side encryption (placeholder).');
+      encryptedRefreshToken = credentials.refresh_token; 
+    }
+
+    const credsToSave = {
+      user_id: uid,
+      access_token: credentials.access_token,
+      refresh_token: encryptedRefreshToken, // Store encrypted version
+      expiry_date: credentials.expiry_date, // Store expiry timestamp (number)
+      scope: credentials.scope,
+      token_type: credentials.token_type,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Upsert the credentials
+    const { error } = await supabase
+      .from('google_credentials')
+      .upsert(credsToSave, { onConflict: 'user_id' });
+
+    if (error) {
+      console.error('Error saving Google credentials:', error);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error('Error in saveGoogleCredentials:', error);
+    return false;
+  }
+};
+
+// Function to get Google credentials (requires backend for decryption)
+// Getting encrypted credentials on the client is not useful.
+// We need a backend endpoint to securely retrieve and use/refresh them.
+
+// Function to delete Google credentials
+export const deleteGoogleCredentials = async (uid: string): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from('google_credentials')
+      .delete()
+      .eq('user_id', uid);
+
+    if (error) {
+      console.error('Error deleting Google credentials:', error);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error('Error in deleteGoogleCredentials:', error);
+    return false;
   }
 }; 

@@ -90,7 +90,7 @@ const logger = winston.createLogger({
   exitOnError: false
 });
 
-// Add request logging helper
+// Enhanced request logging with full URL path
 logger.logRequest = (req, msg = 'API Request') => {
   if (process.env.NODE_ENV === 'production' && req.path === '/api/health') {
     return; // Skip logging health checks in production
@@ -102,9 +102,14 @@ logger.logRequest = (req, msg = 'API Request') => {
     safeHeaders.authorization = 'Bearer [REDACTED]';
   }
 
+  // Get the full URL path for debugging proxy issues
+  const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
+
   logger.info(`${msg}: ${req.method} ${req.path}`, {
     method: req.method,
     path: req.path,
+    originalUrl: req.originalUrl,
+    fullUrl,
     query: req.query,
     ip: req.ip,
     userAgent: req.get('user-agent'),
@@ -124,6 +129,7 @@ logger.logResponse = (req, res, responseTime, msg = 'API Response') => {
   logger[level](`${msg}: ${req.method} ${req.path} ${res.statusCode} ${responseTime}ms`, {
     method: req.method,
     path: req.path,
+    originalUrl: req.originalUrl,
     statusCode: res.statusCode,
     responseTime,
     userId: req.user?.uid || 'unauthenticated'
@@ -142,6 +148,7 @@ logger.logError = (err, req = null, msg = 'Server Error') => {
   if (req) {
     errorInfo.method = req.method;
     errorInfo.path = req.path;
+    errorInfo.originalUrl = req.originalUrl;
     errorInfo.userId = req.user?.uid || 'unauthenticated';
     
     // Don't log potentially sensitive request body data in errors

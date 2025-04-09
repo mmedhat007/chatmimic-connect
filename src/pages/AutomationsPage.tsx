@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
-import { getCurrentUser } from '../services/firebase';
+import { useState, useEffect, useCallback } from 'react';
+import { getAuth, onAuthStateChanged, User } from 'firebase/auth'; // Import necessary Firebase auth types
+// Remove getCurrentUser import as we use onAuthStateChanged
+// import { getCurrentUser } from '../services/firebase'; 
 import NavSidebar from '../components/NavSidebar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -11,10 +13,18 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { PlusCircle, Trash2, Save, RefreshCw, AlertTriangle, Brain } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { getUserConfig, saveUserConfig, updateEmbeddings, checkEmbeddingsAvailable } from '../services/supabase';
+// Corrected import: updateEmbeddings might not be needed directly here if save handles it
+// import { getUserConfig, saveUserConfig, updateEmbeddings, checkEmbeddingsAvailable } from '../services/supabase';
+import { getUserConfig, saveUserConfig, checkEmbeddingsAvailable, updateBehaviorRules, updateEmbeddings } from '../services/supabase';
 import AgentBehaviorRules from '../components/AgentBehaviorRules';
 
-// Mock functions to replace Supabase - replaced with actual Supabase functions
+// Assuming a logger exists - create a simple one if not
+const logger = {
+  debug: (...args: any[]) => console.debug('[AutomationsPage]', ...args),
+  info: (...args: any[]) => console.info('[AutomationsPage]', ...args),
+  warn: (...args: any[]) => console.warn('[AutomationsPage]', ...args),
+  error: (...args: any[]) => console.error('[AutomationsPage]', ...args),
+};
 
 interface BehaviorRule {
   id: string;
@@ -64,810 +74,611 @@ interface AgentConfig {
   behavior_rules?: BehaviorRule[];
 }
 
+type AuthState = 'loading' | 'authenticated' | 'unauthenticated';
+
 const AutomationsPage = () => {
-  const [loading, setLoading] = useState(true);
+  const [authState, setAuthState] = useState<AuthState>('loading');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [loadingConfig, setLoadingConfig] = useState(true); // Renamed from loading
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [embeddingsAvailable, setEmbeddingsAvailable] = useState<boolean | null>(null);
-  const userUID = getCurrentUser();
   const [activeTab, setActiveTab] = useState("company");
 
-  // Check if embeddings are available
+  // --- Authentication Handling --- 
+  useEffect(() => {
+    const auth = getAuth();
+    logger.info('[Auth Effect] Setting up onAuthStateChanged listener.');
+    // Use onAuthStateChanged to listen for auth state readiness
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        logger.info(`[Auth Effect] User authenticated: ${user.uid}`);
+        setCurrentUser(user);
+        setAuthState('authenticated');
+      } else {
+        logger.info('[Auth Effect] User not authenticated.');
+        setCurrentUser(null);
+        setAuthState('unauthenticated');
+        setLoadingConfig(false); // No config to load if not authenticated
+        setConfig(null); // Clear config if user logs out
+      }
+    });
+
+    // Cleanup subscription on unmount
+    return () => {
+       logger.info('[Auth Effect] Cleaning up onAuthStateChanged listener.');
+       unsubscribe();
+    }
+  }, []);
+
+  // --- Effect to check embeddings *after* authentication --- 
   useEffect(() => {
     const checkEmbeddings = async () => {
+      logger.debug('[Embeddings Check Effect] Checking embeddings availability...');
       const available = await checkEmbeddingsAvailable();
+      logger.debug(`[Embeddings Check Effect] Embeddings available: ${available}`);
       setEmbeddingsAvailable(available);
     };
     
-    checkEmbeddings();
-  }, []);
+    // Only run if user is authenticated
+    if (authState === 'authenticated') {
+       logger.info('[Embeddings Check Effect] Auth state is authenticated, running check.');
+       checkEmbeddings();
+    } else {
+       logger.info(`[Embeddings Check Effect] Skipping check, authState is ${authState}.`);
+    }
+  }, [authState]); // Rerun when authState changes
 
-  useEffect(() => {
-    const fetchConfig = async () => {
-      if (!userUID) return;
-      
-      setLoading(true);
-      
-      try {
-        // First, try to get config from localStorage
-        const storedConfig = localStorage.getItem(`user_${userUID}_config`);
-        let parsedConfig = null;
-        
-        if (storedConfig) {
-          try {
-            parsedConfig = JSON.parse(storedConfig);
-            console.log('Retrieved config from localStorage:', parsedConfig);
-          } catch (e) {
-            console.error('Error parsing stored config:', e);
-            // Continue to get from Supabase if localStorage parsing fails
-          }
-        }
-        
-        // If not in localStorage, get from Supabase
-        if (!parsedConfig) {
-          const data = await getUserConfig(userUID);
-          
-          if (data) {
-            parsedConfig = data;
-          }
-        }
-        
-        if (parsedConfig) {
-          // Transform the data if needed to match expected format
-          const formattedConfig: AgentConfig = {
-            id: parsedConfig.id || 0,
-            company_info: parsedConfig.company_info || {
-              name: '',
-              industry: '',
-              locations: [],
-              contact_info: '',
-              differentiators: '',
-              website: '',
-              mission: '',
-              target_audience: '',
-              operating_hours: '',
-              response_time: ''
-            },
-            services: parsedConfig.services || {
-              main_offerings: [],
-              pricing_info: '',
-              delivery_areas: [],
-              special_features: []
-            },
-            communication_style: parsedConfig.communication_style || {
-              tone: 'friendly',
-              languages: ['English'],
-              emoji_usage: true,
-              response_length: 'medium'
-            },
-            business_processes: parsedConfig.business_processes || {
-              booking_process: '',
-              refund_policy: '',
-              common_questions: [],
-              special_requirements: []
-            },
-            integrations: parsedConfig.integrations || {
-              current_tools: [],
-              required_integrations: [],
-              automation_preferences: '',
-              lead_process: ''
-            },
-            behavior_rules: parsedConfig.behavior_rules || []
-          };
-          
-          setConfig(formattedConfig);
-          console.log('Formatted config for Automations page:', formattedConfig);
-        } else {
-          // If no config exists, create a default one
-          setConfig({
-            id: 0,
-            company_info: {
-              name: '',
-              industry: '',
-              website: '',
-              mission: '',
-              target_audience: '',
-              locations: [],
-              operating_hours: '',
-              contact_info: '',
-              response_time: '',
-              differentiators: ''
-            },
-            services: {
-              main_offerings: [],
-              pricing_info: '',
-              delivery_areas: [],
-              special_features: []
-            },
-            communication_style: {
-              tone: 'friendly',
-              languages: ['English'],
-              emoji_usage: true,
-              response_length: 'medium'
-            },
-            business_processes: {
-              booking_process: '',
-              refund_policy: '',
-              common_questions: [],
-              special_requirements: []
-            },
-            integrations: {
-              current_tools: [],
-              required_integrations: [],
-              automation_preferences: '',
-              lead_process: ''
-            },
-            behavior_rules: []
-          });
-        }
-      } catch (error) {
-        console.error('Error fetching configuration:', error);
-        // Set default config on error
-        setConfig({
-          id: 0,
-          company_info: {
-            name: '',
-            industry: '',
-            website: '',
-            mission: '',
-            target_audience: '',
-            locations: [],
-            operating_hours: '',
-            contact_info: '',
-            response_time: '',
-            differentiators: ''
-          },
-          services: {
-            main_offerings: [],
-            pricing_info: '',
-            delivery_areas: [],
-            special_features: []
-          },
-          communication_style: {
-            tone: 'friendly',
-            languages: ['English'],
-            emoji_usage: true,
-            response_length: 'medium'
-          },
-          business_processes: {
-            booking_process: '',
-            refund_policy: '',
-            common_questions: [],
-            special_requirements: []
-          },
-          integrations: {
-            current_tools: [],
-            required_integrations: [],
-            automation_preferences: '',
-            lead_process: ''
-          },
-          behavior_rules: []
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchConfig();
-  }, [userUID]);
+  // Helper function to create a default config structure (Moved Before fetchConfig)
+  const createDefaultConfig = useCallback((): AgentConfig => ({
+    id: 0,
+    company_info: { name: '', industry: '', locations: [], contact_info: '', differentiators: '' },
+    services: { main_offerings: [], pricing_info: '', delivery_areas: [], special_features: [] },
+    communication_style: { tone: 'friendly', languages: ['English'], emoji_usage: true, response_length: 'medium' },
+    business_processes: { booking_process: '', refund_policy: '', common_questions: [], special_requirements: [] },
+    integrations: { current_tools: [], required_integrations: [], automation_preferences: '', lead_process: '' },
+    behavior_rules: []
+  }), []);
 
-  const handleSave = async () => {
-    if (!config || !userUID) return;
+  // --- Define fetchConfig using useCallback --- 
+  const fetchConfig = useCallback(async (forceReload = false) => {
+    // currentUser state is now the source of truth for the UID
+    if (!currentUser) { 
+      logger.warn('[Config Fetch Effect] currentUser is null, cannot fetch config.');
+      setLoadingConfig(false); // Ensure loading stops if currentUser becomes null
+      setConfig(null); // Clear config if currentUser becomes null
+      return;
+    }
     
-    setSaving(true);
+    const userUID = currentUser.uid;
+    logger.info(`[Config Fetch Effect] Fetching config for user: ${userUID}`);
+    setLoadingConfig(true);
+    // Don't clear config immediately if not forcing reload, might cause flicker
+    if (forceReload) {
+      setConfig(null); // Clear previous config while loading new one if forced
+    }
     
     try {
-      // Save configuration to Supabase
-      const saveResult = await saveUserConfig(userUID, config);
+      const data = await getUserConfig(userUID); 
       
-      if (!saveResult) {
-        throw new Error('Failed to save configuration');
+      if (data) {
+         logger.info('[Config Fetch Effect] Received config data:', data);
+         // Transform the data if needed to match expected format
+         const formattedConfig: AgentConfig = {
+           id: data.id || 0,
+           company_info: data.company_info || {
+             name: '',
+             industry: '',
+             locations: [],
+             contact_info: '',
+             differentiators: '',
+             website: '',
+             mission: '',
+             target_audience: '',
+             operating_hours: '',
+             response_time: ''
+           },
+           services: data.services || {
+             main_offerings: [],
+             pricing_info: '',
+             delivery_areas: [],
+             special_features: []
+           },
+           communication_style: data.communication_style || {
+             tone: 'friendly',
+             languages: ['English'],
+             emoji_usage: true,
+             response_length: 'medium'
+           },
+           business_processes: data.business_processes || {
+             booking_process: '',
+             refund_policy: '',
+             common_questions: [],
+             special_requirements: []
+           },
+           integrations: data.integrations || {
+             current_tools: [],
+             required_integrations: [],
+             automation_preferences: '',
+             lead_process: ''
+           },
+           // Ensure behavior_rules is an array, default to empty if null/undefined
+           behavior_rules: Array.isArray(data.behavior_rules) ? data.behavior_rules : [] 
+         };
+         
+         setConfig(formattedConfig);
+         logger.debug('[Config Fetch Effect] Set formatted config state.'); // Removed large object log
+      } else {
+         logger.warn('[Config Fetch Effect] No config data found for user, setting default.');
+         // If no config exists, create a default one (consider a helper function)
+         setConfig(createDefaultConfig()); 
       }
-      
-      // Also save to localStorage for faster access
-      localStorage.setItem(`user_${userUID}_config`, JSON.stringify(config));
-      
-      // Only attempt to update embeddings if they're available
-      if (embeddingsAvailable) {
-        try {
-          // Update embeddings for different sections with metadata
-          // Company info embeddings
-          await updateEmbeddings(
-            userUID, 
-            JSON.stringify(config.company_info), 
-            'company_info'
-          );
+    } catch (error: any) {
+      logger.error('[Config Fetch Effect] Error fetching configuration:', error.message || error);
+      toast.error(`Failed to load configuration: ${error.message}`);
+      setConfig(createDefaultConfig()); // Set default on error
+    } finally {
+      setLoadingConfig(false);
+      logger.info('[Config Fetch Effect] Finished fetching config.');
+    }
+  }, [currentUser, setLoadingConfig, setConfig, logger, getUserConfig, createDefaultConfig]); // Dependencies for useCallback
+
+  // --- Effect to fetch configuration *after* authentication --- 
+  useEffect(() => {
+    // Only run fetchConfig if user is authenticated
+    if (authState === 'authenticated') {
+      logger.info('[Config Fetch Effect] Auth state is authenticated, fetching config.');
+      fetchConfig(); // Call the memoized function
+    } else {
+       logger.info(`[Config Fetch Effect] Skipping fetch, authState is ${authState}.`);
+       // Clear config and loading state if user logs out while page is open
+       setConfig(null);
+       setLoadingConfig(false);
+    }
+    // Depend on authState and the memoized fetchConfig function itself
+  }, [authState, fetchConfig]); 
+
+  // --- Save Handler --- 
+  const handleSave = async () => {
+    if (!currentUser) {
+      toast.error("Authentication error. Please log in again.");
+      logger.error('[Save Handler] Save attempt failed: currentUser is null.');
+      return;
+    }
+    if (!config) {
+      toast.error("Configuration data is not loaded or missing.");
+      logger.error('[Save Handler] Save attempt failed: config is null.');
+      return;
+    }
+
+    setSaving(true);
+    logger.info(`[Save Handler] Saving configuration for user: ${currentUser.uid}`);
+    
+    // Create a version of the config *without* behavior_rules for saving main config
+    const configToSave = { ...config };
+    delete configToSave.behavior_rules;
+    
+    logger.debug('[Save Handler] Config object being saved (excluding behavior rules):', configToSave);
+
+    try {
+      // Save the main configuration object (excluding behavior_rules)
+      const saveSuccess = await saveUserConfig(currentUser.uid, configToSave);
+
+      if (saveSuccess) {
+        logger.info('[Save Handler] Main configuration saved successfully, updating relevant embeddings...');
+        toast.success('Configuration saved successfully!');
+
+        // Sections for embedding update (EXCLUDING behavior_rules)
+        const sectionsToEmbed: (keyof AgentConfig)[] = [
+           'company_info', 'services', 'communication_style', 
+           'business_processes', 'integrations'
+          ];
           
-          // Services embeddings
-          await updateEmbeddings(
-            userUID,
-            JSON.stringify(config.services),
-            'services'
-          );
-          
-          // Communication style embeddings
-          await updateEmbeddings(
-            userUID,
-            JSON.stringify(config.communication_style),
-            'communication_style'
-          );
-          
-          // Business processes embeddings
-          await updateEmbeddings(
-            userUID,
-            JSON.stringify(config.business_processes),
-            'business_processes'
-          );
-          
-          // Complete config embeddings (excluding behavior_rules)
-          const configWithoutBehaviorRules = { ...config };
-          delete configWithoutBehaviorRules.behavior_rules;
-          await updateEmbeddings(
-            userUID,
-            JSON.stringify(configWithoutBehaviorRules),
-            'complete_config'
-          );
-          
-          console.log('Successfully updated embeddings');
-        } catch (embeddingError) {
-          console.error('Error updating embeddings:', embeddingError);
-          // Continue anyway, as embeddings are not critical for core functionality
-        }
+        const embeddingUpdates = sectionsToEmbed.map(sectionName => {
+            // Make sure to reference the original `config` state which includes all sections
+            const sectionData = config[sectionName]; 
+            const contentString = sectionData ? JSON.stringify(sectionData) : ''; 
+            if (!contentString) {
+               logger.warn(`[Save Handler] Skipping embedding update for empty section: ${sectionName}`);
+               return Promise.resolve({ status: 'skipped' });
+            }
+            logger.debug(`[Save Handler] Triggering embedding update for section: ${sectionName}`);
+            // Pass the original config section data to updateEmbeddings
+            return updateEmbeddings(currentUser.uid, contentString, sectionName);
+        });
+
+        const results = await Promise.allSettled(embeddingUpdates);
+        
+        results.forEach((result, index) => {
+           const sectionName = sectionsToEmbed[index];
+           if ((result.status === 'fulfilled' && (result.value as any)?.status === 'skipped') || (result.status === 'fulfilled' && result.value === true)) {
+             if ((result.value as any)?.status !== 'skipped') { 
+                logger.info(`[Save Handler] Embeddings updated successfully for section: ${sectionName}`);
+             }
+           } else if (result.status === 'fulfilled' && result.value === false) {
+             logger.warn(`[Save Handler] Embeddings update failed (returned false) for section: ${sectionName}`);
+             toast.error(`Failed to update embeddings for ${sectionName}.`);
+           } else if (result.status === 'rejected') {
+             logger.error(`[Save Handler] Embeddings update threw an error for section: ${sectionName}`, result.reason);
+             toast.error(`Error updating embeddings for ${sectionName}.`);
+           } else {
+             logger.error(`[Save Handler] Unexpected result for embedding update on section ${sectionName}:`, result);
+             toast.error(`Unexpected error updating embeddings for ${sectionName}.`);
+           }
+         });
+
+      } else {
+        logger.error('[Save Handler] Failed to save main configuration via service (saveUserConfig returned false).');
+        toast.error('Failed to save configuration. Please try again.');
       }
-      
-      toast.success('Agent configuration saved successfully!');
-    } catch (error) {
-      console.error('Error saving configuration:', error);
-      toast.error('Failed to save agent configuration');
+    } catch (error: any) {
+      logger.error('[Save Handler] Error during main save process:', error.message || error);
+      toast.error(`An error occurred while saving: ${error.message}`);
     } finally {
       setSaving(false);
+      logger.info('[Save Handler] Main save process finished.');
     }
   };
 
-  // Company Info handlers
-  const updateCompanyInfo = (field: string, value: string) => {
-    if (!config) return;
-    
-    setConfig({
-      ...config,
-      company_info: {
-        ...config.company_info,
-        [field]: value
-      }
-    });
-  };
-
-  const updateLocations = (locationsStr: string) => {
-    if (!config) return;
-    
-    const locations = locationsStr.split(',').map(loc => loc.trim());
-    
-    setConfig({
-      ...config,
-      company_info: {
-        ...config.company_info,
-        locations
-      }
-    });
-  };
-
-  // Roles handlers
-  const addRole = () => {
-    if (!config) return;
-    
-    const newOfferings = [...config.services.main_offerings, ''];
-    
-    setConfig({
-      ...config,
-      services: {
-        ...config.services,
-        main_offerings: newOfferings
-      }
-    });
-  };
+  // --- Update Handlers --- 
   
-  const updateRole = (index: number, value: string) => {
-    if (!config) return;
-    
-    const newOfferings = [...config.services.main_offerings];
-    newOfferings[index] = value;
-    
-    setConfig({
-      ...config,
-      services: {
-        ...config.services,
-        main_offerings: newOfferings
-      }
-    });
-  };
-  
-  const removeRole = (index: number) => {
-    if (!config) return;
-    
-    const newOfferings = [...config.services.main_offerings];
-    newOfferings.splice(index, 1);
-    
-    setConfig({
-      ...config,
-      services: {
-        ...config.services,
-        main_offerings: newOfferings
-      }
-    });
-  };
-  
-  // Communication style handlers
-  const updateCommunicationStyle = (field: string, value: any) => {
-    if (!config) return;
-    
-    setConfig({
-      ...config,
-      communication_style: {
-        ...config.communication_style,
-        [field]: value
-      }
-    });
-  };
-  
-  // Scenarios handlers
-  const addScenario = () => {
-    if (!config) return;
-    
-    const newQuestions = [...config.business_processes.common_questions, ''];
-    
-    setConfig({
-      ...config,
-      business_processes: {
-        ...config.business_processes,
-        common_questions: newQuestions
-      }
-    });
-  };
-  
-  const updateScenario = (index: number, value: string) => {
-    if (!config) return;
-    
-    const newQuestions = [...config.business_processes.common_questions];
-    newQuestions[index] = value;
-    
-    setConfig({
-      ...config,
-      business_processes: {
-        ...config.business_processes,
-        common_questions: newQuestions
-      }
-    });
-  };
-  
-  const removeScenario = (index: number) => {
-    if (!config) return;
-    
-    const newQuestions = [...config.business_processes.common_questions];
-    newQuestions.splice(index, 1);
-    
-    setConfig({
-      ...config,
-      business_processes: {
-        ...config.business_processes,
-        common_questions: newQuestions
-      }
-    });
-  };
-  
-  // Knowledge base handlers
-  const updateKnowledgeBase = (field: string, value: string) => {
-    if (!config) return;
-    
-    if (field === 'product_catalog') {
-      const features = value.split('\n').filter(feature => feature.trim() !== '');
-      
-      setConfig({
-        ...config,
-        services: {
-          ...config.services,
-          special_features: features
+  // Helper to update nested state safely
+  const handleNestedChange = (section: keyof AgentConfig, field: string, value: any) => {
+    setConfig(prevConfig => {
+      if (!prevConfig) return null;
+      // Ensure the section exists
+      const currentSection = prevConfig[section] || {};
+      logger.debug(`[State Update] Updating ${section}.${field} to:`, value);
+      return {
+        ...prevConfig,
+        [section]: {
+          ...currentSection,
+          [field]: value
         }
-      });
-    } else {
-      setConfig({
-        ...config,
-        services: {
-          ...config.services,
-          pricing_info: value
-        }
-      });
-    }
-  };
-  
-  // Compliance handlers
-  const updateComplianceRules = (field: string, value: string) => {
-    if (!config) return;
-    
-    setConfig({
-      ...config,
-      integrations: {
-        ...config.integrations,
-        automation_preferences: value
-      }
+      };
     });
   };
   
-  const updateForbiddenWords = (forbiddenWords: string) => {
-    if (!config) return;
-    
-    const words = forbiddenWords.split(',').map(word => word.trim());
-    
-    setConfig({
-      ...config,
-      integrations: {
-        ...config.integrations,
-        required_integrations: words
-      }
-    });
+  // Specific handlers using the helper
+  const updateCompanyInfo = (field: keyof AgentConfig['company_info'], value: string | string[]) => {
+    handleNestedChange('company_info', field, value);
+  };
+  
+  const updateServices = (field: keyof AgentConfig['services'], value: string | string[]) => {
+     handleNestedChange('services', field, value);
+  };
+  
+  const updateCommunicationStyle = (field: keyof AgentConfig['communication_style'], value: string | string[] | boolean) => {
+    handleNestedChange('communication_style', field, value);
+  };
+  
+  const updateBusinessProcesses = (field: keyof AgentConfig['business_processes'], value: string | string[]) => {
+     handleNestedChange('business_processes', field, value);
+  };
+  
+  const updateIntegrations = (field: keyof AgentConfig['integrations'], value: string | string[]) => {
+     handleNestedChange('integrations', field, value);
   };
 
-  // Behavior rules handlers
-  const updateBehaviorRules = (rules: BehaviorRule[]) => {
-    if (!config) return;
-    
-    setConfig({
-      ...config,
-      behavior_rules: rules
+  // Handlers for array inputs (needs specific logic)
+  const updateArrayField = (section: keyof AgentConfig, field: string, value: string) => {
+    setConfig(prevConfig => {
+      if (!prevConfig) return null;
+      const currentSection = prevConfig[section] || {};
+      // Split by newline, trim, and filter empty strings
+      const updatedArray = value.split('\n').map(s => s.trim()).filter(s => s !== '');
+       logger.debug(`[State Update] Updating array field ${section}.${field} to:`, updatedArray);
+      return {
+        ...prevConfig,
+        [section]: {
+          ...currentSection,
+          [field]: updatedArray
+        }
+      };
     });
   };
   
-  if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="flex flex-col items-center">
-          <RefreshCw className="h-8 w-8 text-blue-500 animate-spin mb-4" />
-          <p className="text-gray-700">Loading agent configuration...</p>
-        </div>
-      </div>
-    );
+  // Update behavior rules (passed up from AgentBehaviorRules component)
+  const handleBehaviorRulesUpdate = (rules: BehaviorRule[]) => {
+    logger.debug("[State Update] Updating behavior rules in state:", rules);
+    setConfig(prevConfig => prevConfig ? { ...prevConfig, behavior_rules: rules } : null);
+    // Note: If immediate save/embedding update is needed for rules, add logic here.
+    // Consider debouncing or explicit save button for behavior rules if updates are frequent.
+  };
+
+  // --- Render Logic --- 
+
+  // Display loading indicators based on auth and config loading states
+  if (authState === 'loading') {
+    return <div className="flex justify-center items-center h-screen">Initializing authentication...</div>;
+  }
+
+  if (authState === 'unauthenticated') {
+    return <div className="flex justify-center items-center h-screen">Please log in to configure automations.</div>;
   }
   
+  // Only show config loading if authenticated
+  if (loadingConfig) {
+    return <div className="flex justify-center items-center h-screen">Loading configuration...</div>;
+  }
+  
+  // Handle case where config failed to load even after auth
   if (!config) {
     return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="bg-red-50 p-6 rounded-lg border border-red-100 max-w-md text-center">
-          <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-red-700 mb-2">Configuration Error</h2>
-          <p className="text-gray-700 mb-4">
-            We couldn't load your agent configuration. Please try refreshing the page or contact support.
-          </p>
-          <Button onClick={() => window.location.reload()}>
-            Refresh Page
-          </Button>
+        <div className="flex flex-col justify-center items-center h-screen">
+            <p className="mb-4">Failed to load configuration. Please try refreshing the page.</p>
+            {/* Optional: Add a refresh button */}
+            <Button onClick={() => window.location.reload()}>Refresh Page</Button>
         </div>
-      </div>
-    );
+    ); 
   }
-  
+
+  // Helper to get array values as newline-separated string for Textarea
+  const getArrayAsString = (arr: string[] | undefined): string => {
+    return arr ? arr.join('\n') : '';
+  };
+
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
       <NavSidebar />
-      <div className="flex-1 ml-16 p-6 overflow-y-auto">
-        <div className="container mx-auto max-w-6xl">
-          <div className="flex justify-between items-center mb-6">
-            <div>
-              <h1 className="text-2xl font-bold">Agent Configuration</h1>
-              <p className="text-gray-500">Customize how your AI agent interacts with customers</p>
-            </div>
-            {activeTab !== "behavior" && (
-              <Button onClick={handleSave} disabled={saving} className="flex items-center gap-2">
+      <main className="flex-1 ml-16 p-6 overflow-y-auto">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-semibold text-gray-800 dark:text-white">Automations Configuration</h1>
+          {/* Button Container */}
+          <div className="flex items-center gap-2">
+            {embeddingsAvailable === false && (
+              <span className="mr-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                <AlertTriangle className="w-3 h-3 mr-1" />
+                Embeddings inactive - Save may be slow
+              </span>
+            )}
+            {/* Reload Button */}
+            <Button 
+              variant="outline"
+              onClick={() => fetchConfig(true)} // Force reload
+              disabled={loadingConfig || saving}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${loadingConfig ? 'animate-spin' : ''}`} />
+              {loadingConfig ? "Loading..." : "Reload Config"}
+            </Button>
+            
+            {/* Conditional Save Button */}
+            {activeTab !== 'behavior' && (
+              <Button 
+                onClick={handleSave} 
+                disabled={saving || loadingConfig || !config} 
+                className="flex items-center gap-2"
+              >
                 {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                Save Changes
+                Save Configuration
               </Button>
             )}
           </div>
-          
-          <Tabs defaultValue="company" onValueChange={setActiveTab}>
-            <TabsList className="grid grid-cols-3 md:grid-cols-7 mb-8">
-              <TabsTrigger value="company">Company</TabsTrigger>
-              <TabsTrigger value="roles">Roles</TabsTrigger>
-              <TabsTrigger value="communication">Communication</TabsTrigger>
-              <TabsTrigger value="scenarios">Scenarios</TabsTrigger>
-              <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
-              <TabsTrigger value="compliance">Compliance</TabsTrigger>
-              <TabsTrigger value="behavior">
-                <span className="flex items-center gap-1">
-                  <Brain className="h-4 w-4" />
-                  Behavior
-                </span>
-              </TabsTrigger>
-            </TabsList>
-            
-            {/* Company Info Tab */}
-            <TabsContent value="company">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Company Information</CardTitle>
-                  <CardDescription>
-                    Basic information about your business that the AI agent will use when interacting with customers.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="company-name">Business Name</Label>
-                    <Input
-                      id="company-name"
-                      value={config.company_info.name}
-                      onChange={(e) => updateCompanyInfo('name', e.target.value)}
-                      placeholder="Your business name"
-                    />
+        </div>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-6 mb-4">
+            <TabsTrigger value="company">Company Info</TabsTrigger>
+            <TabsTrigger value="services">Services</TabsTrigger>
+            <TabsTrigger value="communication">Communication</TabsTrigger>
+            <TabsTrigger value="processes">Processes</TabsTrigger>
+            <TabsTrigger value="integrations">Integrations</TabsTrigger>
+            <TabsTrigger value="behavior">Behavior Rules</TabsTrigger>
+          </TabsList>
+
+          {/* Company Info Tab */}
+          <TabsContent value="company">
+            <Card>
+              <CardHeader>
+                <CardTitle>Company Information</CardTitle>
+                <CardDescription>Provide details about your business.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="company-name">Company Name</Label>
+                    <Input id="company-name" value={config.company_info.name} onChange={(e) => updateCompanyInfo('name', e.target.value)} placeholder="Your Business Name" />
                   </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="industry">Industry</Label>
-                    <Input
-                      id="industry"
-                      value={config.company_info.industry}
-                      onChange={(e) => updateCompanyInfo('industry', e.target.value)}
-                      placeholder="e.g., E-commerce, Healthcare, Education"
-                    />
+                  <div className="space-y-1">
+                    <Label htmlFor="company-industry">Industry</Label>
+                    <Input id="company-industry" value={config.company_info.industry} onChange={(e) => updateCompanyInfo('industry', e.target.value)} placeholder="e.g., Restaurant, Retail, SaaS" />
                   </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="locations">Locations</Label>
-                    <Input
-                      id="locations"
-                      value={config.company_info.locations.join(', ')}
-                      onChange={(e) => updateLocations(e.target.value)}
-                      placeholder="e.g., New York, London, Tokyo (comma separated)"
-                    />
+                  <div className="space-y-1">
+                    <Label htmlFor="company-website">Website</Label>
+                    <Input id="company-website" value={config.company_info.website || ''} onChange={(e) => updateCompanyInfo('website', e.target.value)} placeholder="https://yourbusiness.com" />
                   </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="contact-info">Contact Information</Label>
-                    <Input
-                      id="contact-info"
-                      value={config.company_info.contact_info}
-                      onChange={(e) => updateCompanyInfo('contact_info', e.target.value)}
-                      placeholder="e.g., info@example.com, +1 (555) 123-4567"
-                    />
+                   <div className="space-y-1">
+                    <Label htmlFor="company-mission">Mission/Vision</Label>
+                    <Textarea id="company-mission" value={config.company_info.mission || ''} onChange={(e) => updateCompanyInfo('mission', e.target.value)} placeholder="What is your company's core purpose?" />
                   </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="differentiators">Key Differentiators</Label>
-                    <Textarea
-                      id="differentiators"
-                      value={config.company_info.differentiators}
-                      onChange={(e) => updateCompanyInfo('differentiators', e.target.value)}
-                      placeholder="What makes your business unique compared to competitors?"
-                      rows={4}
-                    />
+                   <div className="space-y-1">
+                    <Label htmlFor="company-audience">Target Audience</Label>
+                    <Textarea id="company-audience" value={config.company_info.target_audience || ''} onChange={(e) => updateCompanyInfo('target_audience', e.target.value)} placeholder="Describe your ideal customer." />
                   </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            {/* Roles Tab */}
-            <TabsContent value="roles">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Roles & Responsibilities</CardTitle>
-                  <CardDescription>
-                    Define what roles your AI agent should fulfill, in order of priority.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {config.services.main_offerings.map((offering, index) => (
-                      <div key={index} className="flex items-start gap-4 p-4 border rounded-lg">
-                        <div className="flex-1 space-y-4">
-                          <div className="space-y-2">
-                            <Label htmlFor={`offering-${index}`}>Offering</Label>
-                            <Input
-                              id={`offering-${index}`}
-                              value={offering}
-                              onChange={(e) => updateRole(index, e.target.value)}
-                              placeholder="e.g., Answer FAQs, Handle Complaints"
-                            />
-                          </div>
-                        </div>
-                        
-                        <Button
-                          variant="destructive"
-                          size="icon"
-                          onClick={() => removeRole(index)}
-                          disabled={config.services.main_offerings.length <= 1}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ))}
-                    
-                    <Button onClick={addRole} className="flex items-center gap-2">
-                      <PlusCircle className="w-4 h-4" />
-                      Add Offering
-                    </Button>
+                   <div className="space-y-1">
+                    <Label htmlFor="company-locations">Locations (One per line)</Label>
+                    <Textarea id="company-locations" value={getArrayAsString(config.company_info.locations)} onChange={(e) => updateArrayField('company_info', 'locations', e.target.value)} placeholder="123 Main St, Anytown\n456 Oak Ave, Othertown" />
                   </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            {/* Communication Style Tab */}
-            <TabsContent value="communication">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Communication Style</CardTitle>
-                  <CardDescription>
-                    Define how your AI agent should communicate with customers.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="tone">Tone</Label>
-                    <Select
-                      value={config.communication_style.tone}
-                      onValueChange={(value) => updateCommunicationStyle('tone', value)}
-                    >
-                      <SelectTrigger id="tone">
+                  <div className="space-y-1">
+                    <Label htmlFor="company-hours">Operating Hours</Label>
+                    <Input id="company-hours" value={config.company_info.operating_hours || ''} onChange={(e) => updateCompanyInfo('operating_hours', e.target.value)} placeholder="e.g., Mon-Fri 9am-5pm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="company-contact">Contact Info</Label>
+                    <Textarea id="company-contact" value={config.company_info.contact_info} onChange={(e) => updateCompanyInfo('contact_info', e.target.value)} placeholder="Phone number, email address" />
+                  </div>
+                   <div className="space-y-1">
+                    <Label htmlFor="company-response-time">Typical Response Time</Label>
+                    <Input id="company-response-time" value={config.company_info.response_time || ''} onChange={(e) => updateCompanyInfo('response_time', e.target.value)} placeholder="e.g., Within 24 hours, Immediately" />
+                  </div>
+                  <div className="space-y-1 md:col-span-2">
+                    <Label htmlFor="company-differentiators">Unique Selling Points</Label>
+                    <Textarea id="company-differentiators" value={config.company_info.differentiators} onChange={(e) => updateCompanyInfo('differentiators', e.target.value)} placeholder="What makes your business stand out?" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Services Tab */}
+          <TabsContent value="services">
+             <Card>
+              <CardHeader>
+                <CardTitle>Products & Services</CardTitle>
+                <CardDescription>Describe what you offer.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1 md:col-span-2">
+                    <Label htmlFor="services-offerings">Main Offerings (One per line)</Label>
+                    <Textarea id="services-offerings" value={getArrayAsString(config.services.main_offerings)} onChange={(e) => updateArrayField('services', 'main_offerings', e.target.value)} placeholder="Service 1\nProduct A\nConsulting Package" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="services-pricing">Pricing Information</Label>
+                    <Textarea id="services-pricing" value={config.services.pricing_info} onChange={(e) => updateServices('pricing_info', e.target.value)} placeholder="General pricing structure, specific prices, link to pricing page" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="services-delivery">Delivery Areas (One per line)</Label>
+                    <Textarea id="services-delivery" value={getArrayAsString(config.services.delivery_areas)} onChange={(e) => updateArrayField('services', 'delivery_areas', e.target.value)} placeholder="City Name\nZip Code Area\nNationwide" />
+                  </div>
+                   <div className="space-y-1 md:col-span-2">
+                    <Label htmlFor="services-features">Special Features/Benefits (One per line)</Label>
+                    <Textarea id="services-features" value={getArrayAsString(config.services.special_features)} onChange={(e) => updateArrayField('services', 'special_features', e.target.value)} placeholder="Free shipping\n24/7 support\nEco-friendly options" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Communication Tab */}
+           <TabsContent value="communication">
+             <Card>
+              <CardHeader>
+                <CardTitle>Communication Style</CardTitle>
+                <CardDescription>Define how the agent should interact.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="comm-tone">Tone of Voice</Label>
+                    <Select value={config.communication_style.tone} onValueChange={(value) => updateCommunicationStyle('tone', value)}>
+                      <SelectTrigger id="comm-tone">
                         <SelectValue placeholder="Select tone" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="formal">Formal</SelectItem>
-                        <SelectItem value="casual">Casual</SelectItem>
-                        <SelectItem value="friendly">Friendly</SelectItem>
-                        <SelectItem value="professional">Professional</SelectItem>
-                        <SelectItem value="enthusiastic">Enthusiastic</SelectItem>
+                        <SelectItem value="friendly">Friendly & Approachable</SelectItem>
+                        <SelectItem value="professional">Professional & Formal</SelectItem>
+                        <SelectItem value="enthusiastic">Enthusiastic & Energetic</SelectItem>
+                        <SelectItem value="calm">Calm & Reassuring</SelectItem>
+                        <SelectItem value="concise">Concise & Direct</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="emoji-usage">Use Emojis</Label>
-                    <Switch
-                      id="emoji-usage"
-                      checked={config.communication_style.emoji_usage}
-                      onCheckedChange={(checked) => updateCommunicationStyle('emoji_usage', checked)}
-                    />
+                   <div className="space-y-1">
+                    <Label htmlFor="comm-languages">Languages (Comma-separated)</Label>
+                    <Input id="comm-languages" value={config.communication_style.languages.join(', ')} onChange={(e) => updateCommunicationStyle('languages', e.target.value.split(',').map(s => s.trim()).filter(s => s !== ''))} placeholder="English, Spanish" />
                   </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="response-length">Response Length</Label>
-                    <Select
-                      value={config.communication_style.response_length}
-                      onValueChange={(value) => updateCommunicationStyle('response_length', value)}
-                    >
-                      <SelectTrigger id="response-length">
-                        <SelectValue placeholder="Select response length" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="short">Short</SelectItem>
-                        <SelectItem value="medium">Medium</SelectItem>
-                        <SelectItem value="long">Long</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            {/* Scenarios Tab */}
-            <TabsContent value="scenarios">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Scenario Handling</CardTitle>
-                  <CardDescription>
-                    Define how your AI agent should handle common scenarios.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {config.business_processes.common_questions.map((question, index) => (
-                      <div key={index} className="flex items-start gap-4 p-4 border rounded-lg">
-                        <div className="flex-1 space-y-4">
-                          <div className="space-y-2">
-                            <Label htmlFor={`question-${index}`}>Question</Label>
-                            <Input
-                              id={`question-${index}`}
-                              value={question}
-                              onChange={(e) => updateScenario(index, e.target.value)}
-                              placeholder="e.g., Handle Refund Request"
-                            />
-                          </div>
-                        </div>
-                        
-                        <Button
-                          variant="destructive"
-                          size="icon"
-                          onClick={() => removeScenario(index)}
-                          disabled={config.business_processes.common_questions.length <= 1}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ))}
-                    
-                    <Button onClick={addScenario} className="flex items-center gap-2">
-                      <PlusCircle className="w-4 h-4" />
-                      Add Question
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            {/* Knowledge Base Tab */}
-            <TabsContent value="knowledge">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Knowledge Base</CardTitle>
-                  <CardDescription>
-                    Provide resources that your AI agent can reference when responding to customers.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="faq-url">FAQ URL</Label>
-                    <Input
-                      id="faq-url"
-                      value={config.services.pricing_info}
-                      onChange={(e) => updateKnowledgeBase('faq_url', e.target.value)}
-                      placeholder="e.g., https://example.com/faq"
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="product-catalog">Product Catalog</Label>
-                    <Textarea
-                      id="product-catalog"
-                      value={config.services.special_features.join('\n')}
-                      onChange={(e) => updateKnowledgeBase('product_catalog', e.target.value)}
-                      placeholder="Provide information about your products or services"
-                      rows={6}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            {/* Compliance Tab */}
-            <TabsContent value="compliance">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Compliance & Branding Rules</CardTitle>
-                  <CardDescription>
-                    Define compliance requirements and branding guidelines for your AI agent.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="gdpr-disclaimer">Compliance Disclaimer</Label>
-                    <Textarea
-                      id="gdpr-disclaimer"
-                      value={config.integrations.automation_preferences}
-                      onChange={(e) => updateComplianceRules('gdpr_disclaimer', e.target.value)}
-                      placeholder="e.g., GDPR compliance statement, industry regulations"
-                      rows={4}
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="forbidden-words">Forbidden Words/Phrases</Label>
-                    <Input
-                      id="forbidden-words"
-                      value={config.integrations.required_integrations.join(', ')}
-                      onChange={(e) => updateForbiddenWords(e.target.value)}
-                      placeholder="e.g., spam, scam, guarantee (comma separated)"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
+                   <div className="flex items-center space-x-2">
+                      <Switch id="comm-emoji" checked={config.communication_style.emoji_usage} onCheckedChange={(checked) => updateCommunicationStyle('emoji_usage', checked)} />
+                      <Label htmlFor="comm-emoji">Use Emojis Appropriately</Label>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="comm-length">Response Length</Label>
+                      <Select value={config.communication_style.response_length} onValueChange={(value) => updateCommunicationStyle('response_length', value)}>
+                        <SelectTrigger id="comm-length">
+                          <SelectValue placeholder="Select length" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="short">Short & Concise</SelectItem>
+                          <SelectItem value="medium">Medium & Informative</SelectItem>
+                          <SelectItem value="long">Detailed & Comprehensive</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-            {/* Behavior Rules Tab */}
-            <TabsContent value="behavior">
-              <AgentBehaviorRules 
-                behaviorRules={config.behavior_rules || []}
-                onRulesChange={updateBehaviorRules}
-              />
-            </TabsContent>
-          </Tabs>
-        </div>
-      </div>
+          {/* Business Processes Tab */}
+          <TabsContent value="processes">
+             <Card>
+              <CardHeader>
+                <CardTitle>Business Processes</CardTitle>
+                <CardDescription>Detail your standard operating procedures.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div className="space-y-1">
+                      <Label htmlFor="proc-booking">Booking/Appointment Process</Label>
+                      <Textarea id="proc-booking" value={config.business_processes.booking_process} onChange={(e) => updateBusinessProcesses('booking_process', e.target.value)} placeholder="Describe steps to book, link to booking system if applicable."
+                      />
+                    </div>
+                     <div className="space-y-1">
+                      <Label htmlFor="proc-refund">Return/Refund Policy</Label>
+                      <Textarea id="proc-refund" value={config.business_processes.refund_policy} onChange={(e) => updateBusinessProcesses('refund_policy', e.target.value)} placeholder="Summarize your policy or provide a link."
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <Label htmlFor="proc-faq">Common Questions & Answers (One Q&A per line, format: Q: Question? A: Answer.)</Label>
+                      <Textarea id="proc-faq" value={getArrayAsString(config.business_processes.common_questions)} onChange={(e) => updateArrayField('business_processes', 'common_questions', e.target.value)} placeholder="Q: What are your hours? A: We are open Mon-Fri 9am-5pm.\nQ: Do you offer discounts? A: Yes, we offer a 10% discount for first-time customers."
+                        rows={5}
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <Label htmlFor="proc-special">Special Requirements/Instructions (One per line)</Label>
+                      <Textarea id="proc-special" value={getArrayAsString(config.business_processes.special_requirements)} onChange={(e) => updateArrayField('business_processes', 'special_requirements', e.target.value)} placeholder="All new clients require a consultation first.\nInternational shipping requires extra verification."
+                      />
+                    </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+          
+          {/* Integrations Tab */}
+          <TabsContent value="integrations">
+             <Card>
+              <CardHeader>
+                <CardTitle>Integrations & Tools</CardTitle>
+                <CardDescription>List tools and define automation preferences.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div className="space-y-1">
+                      <Label htmlFor="int-current">Current Tools (One per line)</Label>
+                      <Textarea id="int-current" value={getArrayAsString(config.integrations.current_tools)} onChange={(e) => updateArrayField('integrations', 'current_tools', e.target.value)} placeholder="CRM (e.g., HubSpot)\nCalendar (e.g., Google Calendar)\nPayment Processor (e.g., Stripe)"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="int-required">Required Integrations (One per line)</Label>
+                      <Textarea id="int-required" value={getArrayAsString(config.integrations.required_integrations)} onChange={(e) => updateArrayField('integrations', 'required_integrations', e.target.value)} placeholder="Must integrate with our custom booking system.\nNeeds to update Google Sheets."
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="int-automation">Automation Preferences</Label>
+                      <Textarea id="int-automation" value={config.integrations.automation_preferences} onChange={(e) => updateIntegrations('automation_preferences', e.target.value)} placeholder="When should the agent hand over to a human? What tasks should be fully automated?"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="int-lead">Lead Handling Process</Label>
+                      <Textarea id="int-lead" value={config.integrations.lead_process} onChange={(e) => updateIntegrations('lead_process', e.target.value)} placeholder="How should new leads be qualified and routed? (e.g., add to CRM, notify sales team)"
+                      />
+                    </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Behavior Rules Tab */}
+          <TabsContent value="behavior">
+            <AgentBehaviorRules
+              behaviorRules={config.behavior_rules || []}
+              onRulesChange={handleBehaviorRulesUpdate}
+            />
+          </TabsContent>
+        </Tabs>
+      </main>
     </div>
   );
 };

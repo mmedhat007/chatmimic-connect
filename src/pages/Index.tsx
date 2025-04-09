@@ -308,6 +308,18 @@ const Index = () => {
     setShowChat(false);
   };
 
+  const handleDeleteContact = (deletedPhoneNumber: string) => {
+    // If the deleted contact was the active one, clear the active state
+    if (activeContact?.phoneNumber === deletedPhoneNumber) {
+      setActiveContact(null);
+      setMessages([]); // Clear messages as well
+      if (isMobile) {
+        setShowChat(false); // Go back to list view on mobile
+      }
+    }
+    // The contact list will update automatically due to the real-time listener
+  };
+
   const handleUpdateContactStatus = async (contactId: string, status: string) => {
     try {
       // Store the exact status value to ensure we don't lose it
@@ -513,6 +525,7 @@ const Index = () => {
                 activeContact={activeContact}
                 onSelectContact={handleSelectContact}
                 lifecycleFilter={activeLifecycleFilter}
+                onDeleteContact={handleDeleteContact}
               />
             </div>
           )}

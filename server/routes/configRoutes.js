@@ -1,3 +1,5 @@
+console.log('[DEBUG] routes/configRoutes.js executing...');
+
 /**
  * Routes for user configuration management
  */
@@ -11,6 +13,7 @@ const { saveUserConfig, fetchUserConfig } = require('../services/supabaseService
 // Create config validators
 const { body } = require('express-validator');
 
+// RESTORED Validators
 const configValidators = [
   body('name').trim().isString().notEmpty().withMessage('Name is required'),
   body('behaviorRules').isArray().withMessage('Behavior rules must be an array'),
@@ -25,6 +28,9 @@ const router = express.Router();
 /**
  * Save user configuration
  * POST /api/config
+ * 
+ * Creates or updates a user's configuration including behavior rules and settings
+ * Protected route - requires authentication
  */
 router.post('/',
   requireAuth,
@@ -75,6 +81,9 @@ router.post('/',
 /**
  * Get user configuration
  * GET /api/config
+ * 
+ * Retrieves the current user's configuration
+ * Protected route - requires authentication
  */
 router.get('/',
   requireAuth,

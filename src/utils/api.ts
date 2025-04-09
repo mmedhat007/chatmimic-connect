@@ -2,62 +2,165 @@
  * API utilities for interacting with the backend
  */
 
-import { getAuth } from 'firebase/auth';
+import { getAuth, getIdToken } from 'firebase/auth';
+// import logger from './logger'; // Assuming you have a logger utility - Commented out for now
 
-// Base API URL
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? '/api' 
-  : 'http://localhost:3000/api';
+// Simple console logger replacement for now
+const logger = {
+  debug: (...args: any[]) => console.debug('[API Client]', ...args),
+  info: (...args: any[]) => console.info('[API Client]', ...args),
+  warn: (...args: any[]) => console.warn('[API Client]', ...args),
+  error: (...args: any[]) => console.error('[API Client]', ...args),
+};
+
+// Base API URL - Adjusted to only use relative path for proxy compatibility
+const API_BASE_URL = '/api'; 
 
 /**
- * Base API request function that handles authentication
- * @param path - API endpoint path
+ * Base API request function that handles authentication and error formatting
+ * @param path - API endpoint path (relative to /api)
  * @param options - Request options
  * @returns Promise with response data
  */
 export const apiRequest = async (path: string, options: RequestInit = {}) => {
+  const fullPath = path.startsWith('/api') ? path : `${API_BASE_URL}${path}`;
+  const method = options.method || 'GET';
+  logger.debug(`[apiRequest START] ${method} ${fullPath}`);
+
+  let authToken: string | null = null;
   try {
     const auth = getAuth();
     const user = auth.currentUser;
-    
-    // Prepare headers with authentication if user is logged in
+
+    if (user) {
+      logger.debug(`[apiRequest Auth] User object exists (uid: ${user.uid}), attempting to get ID token.`);
+      try {
+        // Try getting the token
+        authToken = await getIdToken(user, /* forceRefresh */ false); 
+        logger.debug(`[apiRequest Auth] getIdToken returned: type=${typeof authToken}, value=${authToken ? authToken.substring(0,10)+'...' : authToken}`);
+
+        // *** Re-verify CRITICAL CHECK ***
+        if (!authToken || typeof authToken !== 'string' || authToken.length < 10) {
+           const errorMsg = 'Failed to retrieve Firebase ID token: getIdToken returned invalid value.';
+           logger.error(`[apiRequest Auth Error] ${errorMsg}`, { 
+               userId: user.uid, 
+               tokenValue: authToken, // Log the actual value received
+               tokenType: typeof authToken 
+            });
+           // Throw a specific error that calling code might need to catch explicitly
+           const authError = new Error(errorMsg);
+           authError.name = 'TokenRetrievalError';
+           throw authError; 
+        }
+        // If we get here, token is a valid string
+        logger.debug(`[apiRequest Auth] Token retrieved successfully.`);
+        
+      } catch (authError: any) {
+        logger.error('[apiRequest Auth Error] Error explicitly thrown by getIdToken():', { 
+           message: authError.message, 
+           code: authError.code,
+           name: authError.name,
+           path: fullPath,
+           userId: user.uid
+         });
+        // Re-throw but maybe wrap it or ensure name is set
+        const wrappedError = new Error(`Authentication error during token retrieval: ${authError.message}`);
+        wrappedError.name = authError.name === 'TokenRetrievalError' ? 'TokenRetrievalError' : 'GetIdTokenError';
+        throw wrappedError;
+      }
+    } else {
+      logger.warn(`[apiRequest Auth] No authenticated user found (auth.currentUser is null) for API Request: ${method} ${fullPath}`);
+      // No token to add, proceed without Authorization header. Server will reject if needed.
+    }
+
+    // --- Prepare and make the fetch call --- 
+    logger.debug(`[apiRequest Fetch] Preparing fetch call for ${method} ${fullPath}`);
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
       ...options.headers,
     };
 
-    // Add authentication token if available
-    if (user) {
-      const token = await user.getIdToken();
-      headers['Authorization'] = `Bearer ${token}`;
+    // Only add header if we successfully got a valid token
+    if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+        logger.debug(`[apiRequest Fetch] Authorization header added.`);
+    } else {
+        logger.warn(`[apiRequest Fetch] Proceeding without Authorization header for ${method} ${fullPath}`);
     }
 
-    // Combine options with headers
     const requestOptions: RequestInit = {
       ...options,
       headers,
     };
 
-    // Make the API request
-    const response = await fetch(path, requestOptions);
+    const response = await fetch(fullPath, requestOptions);
+    logger.debug(`[apiRequest Fetch] Received response for ${method} ${fullPath}: Status ${response.status}`);
 
+    // --- Handle response --- 
     // Handle HTTP errors
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({
-        error: 'Unknown error',
-        status: response.status,
-      }));
+      let errorData = { 
+         status: 'error', 
+         message: `API Error: ${response.status} ${response.statusText}`,
+         details: { serverStatus: response.status }, // Initialize details
+         meta: {} 
+        };
+      try {
+        // Try to parse the JSON error body from our standardized server response
+        const serverError = await response.json();
+        errorData.message = serverError.message || errorData.message;
+        errorData.details = serverError.details || { serverStatus: response.status };
+        errorData.meta = serverError.meta || {};
+        logger.warn(`[apiRequest Error] API Request failed with status ${response.status}:`, { 
+            path: fullPath, 
+            status: response.status, 
+            serverMessage: errorData.message,
+            details: errorData.details 
+        });
+      } catch (parseError) {
+        // If parsing fails, use the basic status text
+        logger.warn(`[apiRequest Error] API Request failed with status ${response.status}, and error response body was not valid JSON.`, {
+           path: fullPath, 
+           status: response.status 
+        });
+      }
       
-      throw new Error(
-        errorData.error || `API error: ${response.status} ${response.statusText}`
-      );
+      // Throw an error object that mimics our standard server error structure
+      const error = new Error(errorData.message);
+      (error as any).response = errorData; // Attach structured error info
+      error.name = 'ApiError'; // Give it a name
+      throw error;
     }
 
     // Parse JSON response or return empty object for 204 No Content
-    return response.status === 204 ? {} : await response.json();
-  } catch (error) {
-    console.error('API request failed:', error);
-    throw error;
+    if (response.status === 204) {
+       logger.debug(`[apiRequest Success] API Request successful (204 No Content): ${method} ${fullPath}`);
+       return { status: 'success', data: {}, meta: { responseTime: 0 } }; // Provide consistent structure
+    }
+    
+    const responseData = await response.json();
+    logger.debug(`[apiRequest Success] API Request successful (200 OK): ${method} ${fullPath}`);
+    // Ensure the response conforms to our standard structure if possible
+    // Ensure status check is safe
+    return responseData && responseData.status === 'success' ? responseData : { status: 'success', data: responseData, meta: {} };
+
+  } catch (error: any) {
+     // Catch ALL errors from the try block (auth errors, fetch errors, parsing errors)
+     logger.error(`[apiRequest FAIL] Request failed catastrophically for ${method} ${fullPath}:`, { 
+         errorName: error.name,
+         message: error.message, 
+         ...(error.response ? { details: error.response.details } : {}), // Include details if available
+         stack: error.stack 
+      });
+      
+     // Check if it was our specific token retrieval error
+     if (error.name === 'TokenRetrievalError' || error.name === 'GetIdTokenError') {
+       // Handle this specific case - maybe trigger re-authentication?
+       // alert('Authentication failed. Please try logging in again.'); 
+     }
+     
+     // Re-throw the error to be handled by the calling code (e.g., UI)
+     throw error;
   }
 };
 
@@ -76,51 +179,41 @@ export const proxyRequest = async (
   options: RequestInit = {}
 ) => {
   // Build path with service and endpoint
-  const path = `/api/proxy/${service}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const path = `/proxy/${service}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
   
-  // Ensure headers exist in options
+  // NOTE: Authentication is now handled by the central apiRequest function.
+  // We might still need service-specific headers, but not Authorization here.
+  
   const headers = options.headers ? { ...options.headers } : {};
-  
-  // Make sure we're sending proper authorization
-  const auth = getAuth();
-  const user = auth.currentUser;
-  
-  // Only add Authorization if not already present
-  if (user && !headers['Authorization'] && !headers['authorization']) {
-    try {
-      const token = await user.getIdToken(true); // Force token refresh if needed
-      headers['Authorization'] = `Bearer ${token}`;
-    } catch (authError) {
-      console.error('Failed to get auth token:', authError);
-      throw new Error('Authentication error: Unable to retrieve valid token');
-    }
-  }
-  
-  // For Google-specific requests, ensure the service is passed
+
+  // For Google-specific requests, ensure the service is passed (if needed by backend)
+  // This could potentially be moved to the backend proxy logic if not strictly needed here
   if (service === 'google' || service === 'sheets') {
-    headers['X-Service'] = service;
+    // Consider if this header is truly necessary or handled server-side
+    // headers['X-Service'] = service; 
   }
   
-  // Update options with headers
+  // Update options with any service-specific headers
   const updatedOptions = {
     ...options,
     headers
   };
   
   try {
-    const response = await apiRequest(path, updatedOptions);
+    // Use the central apiRequest which handles auth
+    const response = await apiRequest(path, updatedOptions); 
     return response;
-  } catch (error) {
-    // Handle specific error types
-    if (error instanceof Error) {
-      // Check if this is a token expired error from Google
-      if (error.message.includes('401') && (service === 'google' || service === 'sheets')) {
-        console.error('Google API auth error:', error.message);
-        // Let the server handle token refresh and just throw a clearer error
-        throw new Error(`Google API authentication error: Please check your Google connection in settings`);
-      }
+  } catch (error: any) {
+    // Handle specific error types relevant to proxying if needed
+    if (error.response?.details?.errorCode === 'auth/id-token-expired') {
+       logger.warn('Token likely expired during proxy request, user might need to re-authenticate.');
+       // Potentially trigger re-auth flow here
+    } else if (error.message.includes('Google API authentication error')) {
+       // Handle specific Google errors if needed differently
+       logger.error('Google API specific auth error during proxy.');
     }
-    throw error;
+    // Re-throw error for general handling
+    throw error; 
   }
 };
 
@@ -136,7 +229,8 @@ export const generateEmbeddings = async (
     metadata?: Record<string, any>;
   }
 ) => {
-  return apiRequest('/api/proxy/embeddings', { 
+  // Path is relative to /api now
+  return apiRequest('/proxy/embeddings', { 
     method: 'POST',
     body: JSON.stringify({
       text,
@@ -153,7 +247,8 @@ export const extractData = async (
   fields: Array<{name: string, type: string}>,
   model?: string
 ) => {
-  return apiRequest('/api/proxy/extract-data', {
+  // Path is relative to /api now
+  return apiRequest('/proxy/extract-data', { 
     method: 'POST',
     body: JSON.stringify({
       message,
@@ -176,7 +271,8 @@ export const matchDocuments = async (
     throw new Error('Either text or embedding must be provided');
   }
   
-  return apiRequest('/api/proxy/match-documents', {
+  // Path is relative to /api now
+  return apiRequest('/proxy/match-documents', { 
     method: 'POST',
     body: JSON.stringify({
       text,
@@ -196,7 +292,8 @@ export const saveUserConfig = async (config: {
   isActive?: boolean;
   settings?: Record<string, any>;
 }) => {
-  return apiRequest('/api/config', {
+  // Path is relative to /api now
+  return apiRequest('/config', { 
     method: 'POST',
     body: JSON.stringify(config)
   });
@@ -206,26 +303,31 @@ export const saveUserConfig = async (config: {
  * Get user configuration
  */
 export const getUserConfig = async () => {
-  return apiRequest('/api/config', { method: 'GET' });
+  // Path is relative to /api now
+  return apiRequest('/config', { method: 'GET' });
 };
 
 export const getUser = async () => {
-  return apiRequest('/api/user', { method: 'GET' });
+  // Path is relative to /api now
+  return apiRequest('/user', { method: 'GET' });
 };
 
 export const updateUserProfile = async (profileData: any) => {
-  return apiRequest('/api/user/profile', { 
+  // Path is relative to /api now
+  return apiRequest('/user/profile', { 
     method: 'PUT',
     body: JSON.stringify(profileData)
   });
 };
 
-export const getGoogleSheets = async () => {
-  return apiRequest('/api/google/sheets', { method: 'GET' });
+export const getGoogleSheetsStatus = async () => {
+  // Path is relative to /api now
+  return apiRequest('/google-sheets/status', { method: 'GET' }); 
 };
 
 export const getConfigList = async () => {
-  return apiRequest('/api/configs', { method: 'GET' });
+  // Path is relative to /api now
+  return apiRequest('/configs', { method: 'GET' });
 };
 
 export default {
@@ -237,6 +339,6 @@ export default {
   getUserConfig,
   getUser,
   updateUserProfile,
-  getGoogleSheets,
+  getGoogleSheetsStatus,
   getConfigList
 }; 

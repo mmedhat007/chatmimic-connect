@@ -1,5 +1,14 @@
 # ChatMimic Connect Documentation
 
+## Recent Changes (April 2025)
+
+- **Google Sheets Integration Refactor**: Moved Google Sheets API calls (listing sheets, token refresh) to the backend (`/api/google-sheets/*` endpoints) for improved security and credential management. Frontend now calls these backend endpoints.
+- **Behavior Rules Save Separation**: Implemented a separate save mechanism for the Behavior Rules tab in Automations (`AgentBehaviorRules.tsx`) to avoid unnecessary full config saves and embedding updates. The main config save (`AutomationsPage.tsx`) now excludes `behavior_rules`.
+- **Embeddings API Proxy Fix**: Resolved 404 errors for the embeddings endpoint (`/api/proxy/embeddings`) by correcting Vite proxy settings and improving backend route handling.
+- **Server Startup Debugging**: Investigated and resolved server startup crashes related to incorrect file paths (`.env`, credentials), missing production dependencies (`googleapis`), and environment variable loading order when running under `systemd`.
+
+## Key Sections
+
 ## Cursor's Memory Bank
 
 I am Cursor, an expert software engineer whose memory resets completely between sessions. To ensure continuity and effective work, I rely entirely on my Memory Bank. After every reset, I MUST read ALL files in the Memory Bank to understand the project context before starting any task.
@@ -114,4 +123,5 @@ This documentation provides comprehensive information about the ChatMimic Connec
 - [Development Rules](development_rules.md) - Coding standards and practices
 - [Migration Guide](migration_guide.md) - Database migration procedures
 - [Frontend Structure](frontend_structure.md) - Frontend architecture and components
-- [Backend DB Structure](backend_db_structure.md) - Detailed database architecture 
+- [Backend DB Structure](backend_db_structure.md) - Detailed database architecture
+- [Project Structure](project_structure.md) - Details on frontend source code structure (`src/services`, `src/utils`) 

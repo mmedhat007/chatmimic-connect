@@ -130,41 +130,25 @@ export const revokeGoogleAuth = async () => {
 };
 
 /**
- * Get user's Google Sheets
+ * Get user's Google Sheets list from the backend
  */
 export const getUserSheets = async () => {
-  const credentials = await getGoogleSheetsCredentials();
-  const { accessToken } = credentials;
-  
   try {
-    // Build query params for Google Drive API
-    const queryParams = new URLSearchParams({
-      q: "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
-      fields: "files(id,name,createdTime)"
-    }).toString();
-    
-    // Use the proxyRequest to handle authentication and token refresh
-    const response = await proxyRequest(
-      'google',
-      `https://www.googleapis.com/drive/v3/files?${queryParams}`,
-      {
-        method: 'GET',
-        headers: {
-          'Authorization': createAuthHeader(accessToken)
-        }
-      }
-    );
-    
-    // Ensure response.files is an array before returning
-    if (response && Array.isArray(response.files)) {
-      return response.files;
+    // Call the new backend endpoint
+    const response = await apiRequest('/api/google-sheets/list');
+
+    // Check response status and data structure
+    if (response && response.status === 'success' && Array.isArray(response.data?.files)) {
+      return response.data.files;
     } else {
-      console.warn('Unexpected response format from Google Drive API:', response);
-      return [];
+      // Log the unexpected response or error message from the backend
+      console.error('Unexpected response format from /api/google-sheets/list:', response);
+      throw new Error(response?.message || 'Failed to fetch sheets from backend');
     }
   } catch (error) {
-    console.error('Failed to fetch Google Sheets:', error);
-    throw new Error(`Failed to fetch Google Sheets: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('Failed to fetch Google Sheets list via backend:', error);
+    // Re-throw the error to be caught by the component
+    throw new Error(`Failed to fetch Google Sheets list: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 };
 

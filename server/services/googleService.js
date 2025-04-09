@@ -1,3 +1,5 @@
+console.log('[DEBUG] services/googleService.js executing...');
+
 /**
  * Google API service for handling OAuth tokens and API calls
  */
@@ -7,12 +9,24 @@ const crypto = require('crypto');
 const axios = require('axios');
 const logger = require('../utils/logger');
 
+console.log('[DEBUG] googleService.js: Logging env vars for OAuth2 client...');
+console.log(`[DEBUG] GOOGLE_CLIENT_ID: ${process.env.GOOGLE_CLIENT_ID ? 'Set' : 'MISSING'}`);
+console.log(`[DEBUG] GOOGLE_CLIENT_SECRET: ${process.env.GOOGLE_CLIENT_SECRET ? 'Set' : 'MISSING'}`);
+console.log(`[DEBUG] GOOGLE_REDIRECT_URI: ${process.env.GOOGLE_REDIRECT_URI ? 'Set' : 'MISSING'}`);
+
 // OAuth2 client setup
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
-);
+console.log('[DEBUG] googleService.js: About to create OAuth2 client...');
+try {
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+  console.log('[DEBUG] googleService.js: OAuth2 client created successfully.');
+} catch (oauthError) {
+  console.error('[CRITICAL] Failed to create OAuth2 client:', oauthError);
+  throw oauthError;
+}
 
 /**
  * Helper function to decrypt sensitive data
