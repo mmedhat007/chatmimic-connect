@@ -20,8 +20,8 @@ import AgentBehaviorRules from '../components/AgentBehaviorRules';
 
 // Assuming a logger exists - create a simple one if not
 const logger = {
-  debug: (...args: any[]) => console.debug('[AutomationsPage]', ...args),
-  info: (...args: any[]) => console.info('[AutomationsPage]', ...args),
+  // debug: (...args: any[]) => console.debug('[AutomationsPage]', ...args), // REMOVED
+  // info: (...args: any[]) => console.info('[AutomationsPage]', ...args), // REMOVED
   warn: (...args: any[]) => console.warn('[AutomationsPage]', ...args),
   error: (...args: any[]) => console.error('[AutomationsPage]', ...args),
 };
@@ -88,15 +88,14 @@ const AutomationsPage = () => {
   // --- Authentication Handling --- 
   useEffect(() => {
     const auth = getAuth();
-    logger.info('[Auth Effect] Setting up onAuthStateChanged listener.');
-    // Use onAuthStateChanged to listen for auth state readiness
+    // logger.info REMOVED
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        logger.info(`[Auth Effect] User authenticated: ${user.uid}`);
+        // logger.info REMOVED
         setCurrentUser(user);
         setAuthState('authenticated');
       } else {
-        logger.info('[Auth Effect] User not authenticated.');
+        // logger.info REMOVED
         setCurrentUser(null);
         setAuthState('unauthenticated');
         setLoadingConfig(false); // No config to load if not authenticated
@@ -106,7 +105,7 @@ const AutomationsPage = () => {
 
     // Cleanup subscription on unmount
     return () => {
-       logger.info('[Auth Effect] Cleaning up onAuthStateChanged listener.');
+       // logger.info REMOVED
        unsubscribe();
     }
   }, []);
@@ -114,18 +113,18 @@ const AutomationsPage = () => {
   // --- Effect to check embeddings *after* authentication --- 
   useEffect(() => {
     const checkEmbeddings = async () => {
-      logger.debug('[Embeddings Check Effect] Checking embeddings availability...');
+      // logger.debug REMOVED
       const available = await checkEmbeddingsAvailable();
-      logger.debug(`[Embeddings Check Effect] Embeddings available: ${available}`);
+      // logger.debug REMOVED
       setEmbeddingsAvailable(available);
     };
     
     // Only run if user is authenticated
     if (authState === 'authenticated') {
-       logger.info('[Embeddings Check Effect] Auth state is authenticated, running check.');
+       // logger.info REMOVED
        checkEmbeddings();
     } else {
-       logger.info(`[Embeddings Check Effect] Skipping check, authState is ${authState}.`);
+       // logger.info REMOVED
     }
   }, [authState]); // Rerun when authState changes
 
@@ -151,7 +150,7 @@ const AutomationsPage = () => {
     }
     
     const userUID = currentUser.uid;
-    logger.info(`[Config Fetch Effect] Fetching config for user: ${userUID}`);
+    // logger.info REMOVED
     setLoadingConfig(true);
     // Don't clear config immediately if not forcing reload, might cause flicker
     if (forceReload) {
@@ -162,7 +161,7 @@ const AutomationsPage = () => {
       const data = await getUserConfig(userUID); 
       
       if (data) {
-         logger.info('[Config Fetch Effect] Received config data:', data);
+         // logger.info REMOVED
          // Transform the data if needed to match expected format
          const formattedConfig: AgentConfig = {
            id: data.id || 0,
@@ -207,7 +206,7 @@ const AutomationsPage = () => {
          };
          
          setConfig(formattedConfig);
-         logger.debug('[Config Fetch Effect] Set formatted config state.'); // Removed large object log
+         // logger.debug REMOVED
       } else {
          logger.warn('[Config Fetch Effect] No config data found for user, setting default.');
          // If no config exists, create a default one (consider a helper function)
@@ -219,7 +218,7 @@ const AutomationsPage = () => {
       setConfig(createDefaultConfig()); // Set default on error
     } finally {
       setLoadingConfig(false);
-      logger.info('[Config Fetch Effect] Finished fetching config.');
+      // logger.info REMOVED
     }
   }, [currentUser, setLoadingConfig, setConfig, logger, getUserConfig, createDefaultConfig]); // Dependencies for useCallback
 
@@ -227,10 +226,10 @@ const AutomationsPage = () => {
   useEffect(() => {
     // Only run fetchConfig if user is authenticated
     if (authState === 'authenticated') {
-      logger.info('[Config Fetch Effect] Auth state is authenticated, fetching config.');
+      // logger.info REMOVED
       fetchConfig(); // Call the memoized function
     } else {
-       logger.info(`[Config Fetch Effect] Skipping fetch, authState is ${authState}.`);
+       // logger.info REMOVED
        // Clear config and loading state if user logs out while page is open
        setConfig(null);
        setLoadingConfig(false);
@@ -252,20 +251,20 @@ const AutomationsPage = () => {
     }
 
     setSaving(true);
-    logger.info(`[Save Handler] Saving configuration for user: ${currentUser.uid}`);
+    // logger.info REMOVED
     
     // Create a version of the config *without* behavior_rules for saving main config
     const configToSave = { ...config };
     delete configToSave.behavior_rules;
     
-    logger.debug('[Save Handler] Config object being saved (excluding behavior rules):', configToSave);
+    // logger.debug REMOVED
 
     try {
       // Save the main configuration object (excluding behavior_rules)
       const saveSuccess = await saveUserConfig(currentUser.uid, configToSave);
 
       if (saveSuccess) {
-        logger.info('[Save Handler] Main configuration saved successfully, updating relevant embeddings...');
+        // logger.info REMOVED
         toast.success('Configuration saved successfully!');
 
         // Sections for embedding update (EXCLUDING behavior_rules)
@@ -282,7 +281,7 @@ const AutomationsPage = () => {
                logger.warn(`[Save Handler] Skipping embedding update for empty section: ${sectionName}`);
                return Promise.resolve({ status: 'skipped' });
             }
-            logger.debug(`[Save Handler] Triggering embedding update for section: ${sectionName}`);
+            // logger.debug REMOVED
             // Pass the original config section data to updateEmbeddings
             return updateEmbeddings(currentUser.uid, contentString, sectionName);
         });
@@ -293,7 +292,7 @@ const AutomationsPage = () => {
            const sectionName = sectionsToEmbed[index];
            if ((result.status === 'fulfilled' && (result.value as any)?.status === 'skipped') || (result.status === 'fulfilled' && result.value === true)) {
              if ((result.value as any)?.status !== 'skipped') { 
-                logger.info(`[Save Handler] Embeddings updated successfully for section: ${sectionName}`);
+                // logger.info REMOVED
              }
            } else if (result.status === 'fulfilled' && result.value === false) {
              logger.warn(`[Save Handler] Embeddings update failed (returned false) for section: ${sectionName}`);
@@ -316,7 +315,7 @@ const AutomationsPage = () => {
       toast.error(`An error occurred while saving: ${error.message}`);
     } finally {
       setSaving(false);
-      logger.info('[Save Handler] Main save process finished.');
+      // logger.info REMOVED
     }
   };
 
@@ -328,7 +327,7 @@ const AutomationsPage = () => {
       if (!prevConfig) return null;
       // Ensure the section exists
       const currentSection = prevConfig[section] || {};
-      logger.debug(`[State Update] Updating ${section}.${field} to:`, value);
+      // logger.debug REMOVED
       return {
         ...prevConfig,
         [section]: {
@@ -367,7 +366,7 @@ const AutomationsPage = () => {
       const currentSection = prevConfig[section] || {};
       // Split by newline, trim, and filter empty strings
       const updatedArray = value.split('\n').map(s => s.trim()).filter(s => s !== '');
-       logger.debug(`[State Update] Updating array field ${section}.${field} to:`, updatedArray);
+       // logger.debug REMOVED
       return {
         ...prevConfig,
         [section]: {
@@ -380,7 +379,7 @@ const AutomationsPage = () => {
   
   // Update behavior rules (passed up from AgentBehaviorRules component)
   const handleBehaviorRulesUpdate = (rules: BehaviorRule[]) => {
-    logger.debug("[State Update] Updating behavior rules in state:", rules);
+    // logger.debug REMOVED
     setConfig(prevConfig => prevConfig ? { ...prevConfig, behavior_rules: rules } : null);
     // Note: If immediate save/embedding update is needed for rules, add logic here.
     // Consider debouncing or explicit save button for behavior rules if updates are frequent.

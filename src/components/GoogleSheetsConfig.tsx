@@ -222,10 +222,16 @@ const GoogleSheetsConfig: React.FC = () => {
       };
       
       // Create/update the sheet
-      const configWithSheet = await createSheet(updatedConfig);
+      const { sheetId: newSheetId, spreadsheetUrl } = await createSheet(updatedConfig);
       
-      // Save the configuration
-      const savedConfig = await saveSheetConfig(configWithSheet);
+      // Update the config object with the actual sheet ID before saving
+      const configToSave: SheetConfig = {
+        ...updatedConfig,
+        sheetId: newSheetId, // Use the ID returned from createSheet
+      };
+
+      // Save the configuration with the correct sheetId
+      const savedConfig = await saveSheetConfig(configToSave);
       
       // Update local state
       const configIndex = savedConfigs.findIndex(c => c.sheetId === savedConfig.sheetId);
@@ -599,7 +605,7 @@ const GoogleSheetsConfig: React.FC = () => {
               </div>
               
               <div className="border rounded-md">
-                {newConfig.columns.map((column, index) => (
+                {newConfig && Array.isArray(newConfig.columns) && newConfig.columns.map((column, index) => (
                   <div 
                     key={column.id} 
                     className={`p-4 ${index !== newConfig.columns.length - 1 ? 'border-b' : ''}`}

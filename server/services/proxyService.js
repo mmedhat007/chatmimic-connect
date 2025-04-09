@@ -15,8 +15,8 @@ const apiClient = axios.create({
   },
 });
 
-// >>> DEBUG: Log after apiClient creation
-logger.debug('[proxyService] apiClient (axios instance) created.');
+// >>> DEBUG: Log after apiClient creation // REMOVE
+// logger.debug('[proxyService] apiClient (axios instance) created.');
 // <<< END DEBUG
 
 // Add request interceptors for logging

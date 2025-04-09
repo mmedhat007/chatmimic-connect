@@ -25,12 +25,8 @@ dist-ssr
 
 # Environment variables
 .env
-.env.local
-.env.*.local
-.env.development
-.env.production
-server/.env
-*.env
+.env.*
+!/.env.example
 
 # Chatmimic identity assets
 "Chatmimic identity"
@@ -42,3 +38,9 @@ Databases Structure.txt
 "project_documentation"
 
 firebase-credentials.json
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+*.original

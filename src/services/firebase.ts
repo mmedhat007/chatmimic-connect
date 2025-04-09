@@ -123,10 +123,6 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
           lastMessageTime = new Date(data.lastMessageTime).getTime();
         }
 
-        console.log(`Contact ${doc.id} - Raw lastMessageTime:`, data.lastMessageTime);
-        console.log(`Contact ${doc.id} - Processed lastMessageTime:`, lastMessageTime, new Date(lastMessageTime).toISOString());
-        console.log(`Contact ${doc.id} - Lifecycle:`, data.lifecycle || 'none');
-        
         contacts.push({
           id: doc.id,
           phone: doc.id,
@@ -143,12 +139,6 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
         });
       });
       
-      console.log('Before sorting - Contacts:', contacts.map(c => ({
-        phoneNumber: c.phoneNumber,
-        lastMessageTime: c.lastMessageTime,
-        date: new Date(c.lastMessageTime).toISOString()
-      })));
-
       // Sort contacts by lastMessageTime in descending order (newest first)
       contacts.sort((a, b) => {
         // Convert both times to numbers to ensure consistent comparison
@@ -157,12 +147,6 @@ export const getContacts = (onUpdate: (contacts: Contact[]) => void): () => void
         return timeB - timeA;
       });
       
-      console.log('After sorting - Contacts:', contacts.map(c => ({
-        phoneNumber: c.phoneNumber,
-        lastMessageTime: c.lastMessageTime,
-        date: new Date(c.lastMessageTime).toISOString()
-      })));
-
       onUpdate(contacts);
     }, (error) => {
       console.error('Error in contacts listener:', error);
@@ -801,28 +785,25 @@ export const deleteContact = async (phoneNumber: string): Promise<void> => {
     throw new Error('User not authenticated');
   }
 
-  console.log(`Attempting to delete contact: ${phoneNumber} for user: ${userUID}`);
   const contactRef = doc(db, 'Whatsapp_Data', userUID, 'chats', phoneNumber);
   const messagesRef = collection(contactRef, 'messages');
 
   try {
     // 1. Delete all messages in the subcollection
-    console.log(`Deleting messages for ${phoneNumber}...`);
     const messagesSnapshot = await getDocs(messagesRef);
     const batch = writeBatch(db);
     messagesSnapshot.docs.forEach((messageDoc) => {
       batch.delete(messageDoc.ref);
     });
     await batch.commit();
-    console.log(`Successfully deleted ${messagesSnapshot.size} messages for ${phoneNumber}.`);
 
     // 2. Delete the contact document itself
-    console.log(`Deleting contact document ${phoneNumber}...`);
+    // console.log(`Deleting contact document ${phoneNumber}...`); // REMOVE DEBUG
     await deleteDoc(contactRef);
-    console.log(`Successfully deleted contact document ${phoneNumber}.`);
+    // console.log(`Successfully deleted contact document ${phoneNumber}.`); // REMOVE DEBUG
 
   } catch (error) {
     console.error(`Error deleting contact ${phoneNumber}:`, error);
-    throw new Error(`Failed to delete contact ${phoneNumber}.`);
+    throw new Error(`Failed to delete contact ${phoneNumber}.`); // Ensure correct error message
   }
 };

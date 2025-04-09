@@ -118,7 +118,6 @@ const ChatArea = ({ contact, messages, onBack, isMobile, onViewLifecycle, onUpda
         setChatStatus(data.status || 'open');
         // Update the lifecycle value from database in real-time
         setCurrentLifecycle(data.lifecycle);
-        console.log(`REAL-TIME UPDATE - Lifecycle changed to: ${data.lifecycle}`);
       }
     });
 

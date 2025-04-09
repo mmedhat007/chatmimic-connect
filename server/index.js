@@ -1,16 +1,40 @@
 // server/index.js
+console.log(`[INFO] Starting server in ${process.env.NODE_ENV || 'development'} mode.`);
+
+// Define environment-specific paths
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Use pathForEnv from the start
+const pathForEnv = require('path'); 
+
+// Path for .env file
+const prodEnvPath = pathForEnv.resolve(__dirname, '../../credentials/.env'); 
+const devEnvPath = pathForEnv.resolve(__dirname, '.env'); // Assume .env is in server directory for dev
+const envPath = isProduction ? prodEnvPath : devEnvPath;
+
+// Path for Firebase credentials
+const prodCredentialsPath = pathForEnv.resolve(__dirname, '../../credentials/firebase-credentials.json');
+const devCredentialsPath = pathForEnv.resolve(__dirname, 'firebase-credentials.json'); // Assume credentials in server dir for dev
+const serviceAccountPath = isProduction ? prodCredentialsPath : devCredentialsPath;
 
 // Explicitly load .env file using dotenv FIRST
-const pathForEnv = require('path'); // Use a different name to avoid conflict if path is required later
-const envPath = pathForEnv.resolve(__dirname, '../../credentials/.env'); 
 console.log(`[INFO] Attempting to load environment variables from: ${envPath}`);
 try {
-  require('dotenv').config({ path: envPath });
-  console.log(`[INFO] dotenv loaded environment variables from ${envPath}`);
+  const dotenvResult = require('dotenv').config({ path: envPath });
+  if (dotenvResult.error) {
+    // Log dotenv specific error
+    console.warn(`[WARN] dotenv could not load .env file from ${envPath}: ${dotenvResult.error.message}`);
+  } else if (Object.keys(dotenvResult.parsed || {}).length > 0) {
+    console.log(`[INFO] dotenv loaded ${Object.keys(dotenvResult.parsed).length} variables from ${envPath}`);
+  } else {
+     console.warn(`[WARN] dotenv loaded file ${envPath} but it was empty or contained no variables.`);
+  }
 } catch (error) {
-  console.error(`[CRITICAL] Failed to load .env file from ${envPath}:`, error);
-  if (process.env.NODE_ENV === 'production') {
-      console.error('[CRITICAL] Exiting due to missing .env file.');
+  // Catch errors during the require('dotenv') itself
+  console.error(`[CRITICAL] Failed to require or process dotenv:`, error);
+  // In production, a missing .env file is often critical
+  if (isProduction) {
+      console.error('[CRITICAL] Exiting due to dotenv loading failure in production.');
       process.exit(1);
   }
 }
@@ -80,37 +104,33 @@ if (missingEnvVars.length > 0) {
   }
 }
 
-// const serviceAccountPath = path.join(__dirname, 'firebase-credentials.json'); // Old path
-const serviceAccountPath = path.resolve(__dirname, '../../credentials/firebase-credentials.json'); // Corrected relative path
-
 // Initialize Firebase Admin
+console.log(`[INFO] Attempting to initialize Firebase Admin using credentials: ${serviceAccountPath}`);
 try {
-  // Explicitly use the service account key file
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccountPath),
     databaseURL: process.env.FIREBASE_DATABASE_URL,
   });
-  logger.info('Firebase Admin SDK initialized successfully using service account file.');
+  logger.info('Firebase Admin SDK initialized successfully.'); // Simplified message
 } catch (error) {
   console.error('[CRITICAL] Error initializing Firebase Admin SDK:', error);
   logger.error('CRITICAL: Error initializing Firebase Admin SDK. Authentication will likely fail.', {
     error: error.message,
     errorCode: error.code,
-    stack: error.stack,
     serviceAccountPath: serviceAccountPath // Log the path being used
   });
   
-  // Log existence check
+  // Check file existence again using fs
   try {
       const fs = require('fs');
       if (!fs.existsSync(serviceAccountPath)) {
-        console.error(`[CRITICAL] Service account key file not found at: ${serviceAccountPath}`);
-        logger.error(`Service account key file not found at: ${serviceAccountPath}`);
+        console.error(`[CRITICAL] Service account key file does not exist at: ${serviceAccountPath}`);
+        logger.error(`Service account key file does not exist at: ${serviceAccountPath}`);
       }
   } catch (fsError) {
        console.error('[CRITICAL] Error checking file existence:', fsError);
   }
-  // Exit if Firebase init fails critically
+  
   console.error('[CRITICAL] Exiting due to Firebase initialization error.');
   process.exit(1);
 }

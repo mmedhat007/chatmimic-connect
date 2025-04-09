@@ -233,3 +233,65 @@ If you're still experiencing issues after trying the solutions above:
    - Steps to reproduce
    - Error messages or screenshots
    - Your environment details (browser, OS, etc.) 
+
+## Server Startup Failures (Systemd Restart Loops)
+
+*   **Symptom:** Server fails to start, `systemd` status shows constant restarting.
+*   **Debugging Steps:**
+    1.  Check systemd logs: `sudo journalctl -u chatmimic-server.service -f`.
+    2.  If logs unclear, try manual execution: `sudo -u <service_user> -s /bin/bash` then `export $(cat /path/to/.env | xargs)` then `node index.js` (within the project dir).
+    3.  Add granular `console.log` statements around `require` calls and initialization code in `index.js` and related modules (`utils/logger.js`, service initializations) to pinpoint the crashing line.
+    4.  Check file paths (use `path.resolve` or `path.join(__dirname, ...)`).
+    5.  Ensure `dotenv` is loaded *first* in `index.js`.
+    6.  Check for missing dependencies (`npm install`).
+*   **Common Causes:** Missing dependencies, incorrect file paths (esp. for credentials), environment variable loading order, errors in module initialization logic.
+
+## Google API Token Errors (401/403)
+
+*   **Symptom:** Requests to Google APIs (Sheets, etc.) fail with 401 or 403 errors.
+*   **Debugging Steps:**
+    1.  Verify OAuth credentials (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) are correct in `.env`.
+    2.  Check if user has granted necessary permissions during OAuth flow.
+    3.  Examine `googleService.js` (`getValidCredentials`) logic for potential issues in token storage, retrieval, or refresh.
+    4.  Check server logs for errors during the token refresh attempt.
+*   **Common Causes:** Expired/invalid refresh token, incorrect scopes requested, revoked user consent, clock skew between server and Google.
+
+## SSL Certificate Validation Errors
+
+*   **Symptom:** Direct API calls (e.g., via `curl` without `-k`) fail with SSL errors, but browser access works.
+*   **Debugging Steps:**
+    1.  Verify Nginx configuration includes correct paths to Let's Encrypt fullchain and private key.
+    2.  Ensure certificate files have correct permissions.
+    3.  Check certificate validity and chain: `openssl s_client -connect your.domain.com:443`.
+    4.  Confirm firewall allows port 443.
+*   **Common Causes:** Misconfigured Nginx `ssl_certificate` / `ssl_certificate_key` directives, expired certificate, incomplete certificate chain.
+
+## Embeddings API Errors (500 Internal Server Error / 404 Not Found)
+
+*   **Symptom:** Requests to `/api/proxy/embeddings` from the frontend fail with a 500 error. Server logs show the underlying error is often a 404 when trying to reach the external OpenAI API.
+*   **Debugging Steps:**
+    1.  **Check Server Logs:** `sudo journalctl -u chatmimic-server.service -f`. Look for errors originating from `aiService.js` or `proxyService.js` when the `/api/proxy/embeddings` endpoint is hit.
+    2.  **Verify API Key:** Ensure `OPENAI_API_KEY` in the server environment is correct, valid, and has billing enabled/sufficient credits on OpenAI.
+    3.  **Check External URL:** Examine the error details in the logs. A common past issue was a duplicated base URL being sent to OpenAI (e.g., `https://api.openai.com/v1/https://api.openai.com/v1/embeddings`), causing an immediate 404 from OpenAI's side. This indicated an error in URL construction or request processing.
+    4.  **Isolate the Failure Point:** Add temporary `logger.debug` statements strategically:
+        *   In `aiService.js` before calling `makeRequest` to log the options being passed.
+        *   In `proxyService.js` at the start of `makeRequest` and immediately before/after the `await apiClient(...)` call.
+        *   Wrap the `await makeRequest(...)` call in `aiService.js` in its own `try...catch` block to inspect the error object precisely where it's thrown.
+    5.  **Check Response Parsing:** Ensure the code correctly parses the response structure returned by the external API *after* it comes back through `proxyService.makeRequest`. The `makeRequest` function returns the `data` portion of the Axios response, so access should be adjusted accordingly (e.g., `response.data[0].embedding` for OpenAI embeddings).
+    6.  **(Related Check)** Ensure Express `trust proxy` setting is configured correctly in `server/index.js` (`app.set('trust proxy', 1);` and `trustProxy: true` in rate limiters) if behind a reverse proxy like Nginx, to avoid unrelated middleware issues.
+*   **Common Causes:**
+    *   Invalid/missing OpenAI API key.
+    *   Incorrect parsing of the response structure from the external API within `aiService.js` (e.g., accessing `response[0].embedding` instead of `response.data[0].embedding` after the call to `makeRequest`).
+    *   Network connectivity issues between the server and the external API.
+    *   (Previously observed) Errors in request processing logic leading to malformed URLs being sent externally.
+
+*   **Fix (Specific Instance):** The issue was resolved by correcting the response handling logic in `server/services/aiService.js` to properly access the nested embedding data returned by `makeRequest` (using `response.data[0].embedding`).
+
+## CORS Errors
+
+*   **Symptom:** Frontend fails to make API requests, browser console shows CORS errors.
+*   **Debugging Steps:**
+    1.  Verify `CORS_ORIGIN` environment variable on the server matches the frontend URL exactly (including protocol and port if necessary).
+    2.  Check the `cors` middleware configuration in `server/index.js` to ensure allowed methods and headers are sufficient.
+    3.  Inspect network requests in the browser developer tools to see the `OPTIONS` preflight request and its response headers.
+*   **Common Causes:** Mismatched origin URL, missing allowed headers (like `Authorization`), incorrect `credentials: true` setting if cookies/auth headers are needed. 

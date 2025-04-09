@@ -1,7 +1,6 @@
 import { getCurrentUser } from './firebase';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
-import { proxyRequest } from '../utils/api';
 import { apiRequest } from '../utils/api';
 
 // Types
@@ -25,33 +24,6 @@ export interface SheetConfig {
   addTrigger?: 'first_message' | 'show_interest' | 'manual';
   autoUpdateFields?: boolean;
 }
-
-// Helper function to create Auth header with Bearer prefix
-const createAuthHeader = (token: string): string => {
-  return token.startsWith('Bearer ') ? token : `Bearer ${token}`;
-};
-
-/**
- * Get Google Sheets OAuth credentials for the current user
- */
-export const getGoogleSheetsCredentials = async () => {
-  const userUID = getCurrentUser();
-  if (!userUID) throw new Error('No user logged in');
-
-  const userDoc = await getDoc(doc(db, 'Users', userUID));
-  if (!userDoc.exists()) throw new Error('User document not found');
-  
-  const userData = userDoc.data();
-  const credentials = userData.credentials?.googleSheetsOAuth;
-  
-  if (!credentials?.accessToken) {
-    throw new Error('Google Sheets not connected');
-  }
-  
-  // We'll get the access token but rely on the server's token refresh mechanism
-  // to handle expired tokens through the proxy service
-  return credentials;
-};
 
 /**
  * Check if the user has authorized Google Sheets
@@ -229,61 +201,31 @@ export const saveSheetConfig = async (config: SheetConfig) => {
 };
 
 /**
- * Find a contact in a Google Sheet by phone number
+ * Find a contact in a Google Sheet by phone number (calls backend)
  * @param sheetId The ID of the sheet to search
  * @param phoneNumber The phone number to find
  * @returns The row index (1-based) if found, null otherwise
  */
 export const findContactInSheet = async (sheetId: string, phoneNumber: string): Promise<number | null> => {
-  const credentials = await getGoogleSheetsCredentials();
-  const { accessToken } = credentials;
-  
-  // First, we need to get the sheet structure to know which column has phone numbers
-  const sheetConfig = await getSheetConfig(sheetId);
-  if (!sheetConfig) throw new Error('Sheet configuration not found');
-  
-  // Find which column contains phone numbers
-  const phoneColumnIndex = sheetConfig.columns.findIndex(
-    col => col.type === 'phone' || col.name.toLowerCase().includes('phone')
-  );
-  
-  if (phoneColumnIndex === -1) {
-    console.warn('No phone column found in sheet config');
-    return null;
-  }
-  
-  // Convert to A1 notation column
-  const phoneColumn = String.fromCharCode(65 + phoneColumnIndex);
-  
-  // Get all values from the phone column using proxy service
   try {
-    const result = await proxyRequest(
-      'google',
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${phoneColumn}:${phoneColumn}`,
-      {
-        method: 'GET',
-        headers: {
-          'Authorization': createAuthHeader(accessToken)
-        }
-      }
-    );
-
-    // Skip header row (index 0) and search for the phone number
-    for (let i = 1; i < (result.values?.length || 0); i++) {
-      if (result.values[i] && result.values[i][0] === phoneNumber) {
-        return i + 1; // Convert to 1-based row index
-      }
-    }
+    // Construct URL with query parameters
+    const url = `/api/google-sheets/find-contact?sheetId=${encodeURIComponent(sheetId)}&phoneNumber=${encodeURIComponent(phoneNumber)}`;
     
-    return null; // Not found
+    const response = await apiRequest(url, {
+      method: 'GET'
+    });
+    if (response.status === 'success' && response.data) {
+      return response.data.rowIndex; // Expecting { rowIndex: number | null }
+    }
+    throw new Error(response.message || 'Failed to find contact in sheet');
   } catch (error) {
-    console.error('Failed to search sheet data:', error);
-    throw new Error(`Failed to search sheet data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('Error finding contact via backend:', error);
+    throw error; // Re-throw to be handled by caller
   }
 };
 
 /**
- * Update a row in a Google Sheet
+ * Update a row in a Google Sheet (calls backend)
  * @param sheetId The ID of the sheet to update
  * @param rowIndex The 1-based row index to update
  * @param updates An object with column IDs as keys and new values
@@ -292,154 +234,59 @@ export const updateSheetRow = async (
   sheetId: string, 
   rowIndex: number, 
   updates: Record<string, string>
-) => {
-  const credentials = await getGoogleSheetsCredentials();
-  const { accessToken } = credentials;
-  
-  // Get the sheet config to know the column structure
-  const sheetConfig = await getSheetConfig(sheetId);
-  if (!sheetConfig) throw new Error('Sheet configuration not found');
-  
-  // For each update, we'll make a separate API call to update just that cell
-  for (const [columnId, value] of Object.entries(updates)) {
-    // Find the column index
-    const columnIndex = sheetConfig.columns.findIndex(col => col.id === columnId);
-    if (columnIndex === -1) continue; // Skip if column not found
-    
-    // Convert to A1 notation
-    const columnLetter = String.fromCharCode(65 + columnIndex);
-    const cellRef = `${columnLetter}${rowIndex}`;
-    
-    try {
-      // Update the cell
-      await proxyRequest(
-        'google',
-        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${cellRef}?valueInputOption=RAW`,
-        {
-          method: 'PUT',
-          headers: {
-            'Authorization': createAuthHeader(accessToken)
-          },
-          body: JSON.stringify({
-            range: cellRef,
-            majorDimension: 'ROWS',
-            values: [[value]]
-          })
-        }
-      );
-    } catch (error) {
-      console.error(`Failed to update cell ${cellRef}:`, error);
-      throw new Error(`Failed to update cell ${cellRef}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-  
-  return true;
-};
-
-/**
- * Create a new Google Sheet with the specified columns
- */
-export const createSheet = async (config: SheetConfig) => {
-  const credentials = await getGoogleSheetsCredentials();
-  const { accessToken } = credentials;
-  
-  // First, create the spreadsheet
-  if (!config.sheetId) {
-    try {
-      const createResult = await proxyRequest(
-        'google',
-        'https://sheets.googleapis.com/v4/spreadsheets',
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': createAuthHeader(accessToken)
-          },
-          body: JSON.stringify({
-            properties: {
-              title: config.name
-            },
-            sheets: [
-              {
-                properties: {
-                  title: 'Customer Data'
-                }
-              }
-            ]
-          })
-        }
-      );
-      
-      config.sheetId = createResult.spreadsheetId;
-    } catch (error) {
-      console.error('Failed to create spreadsheet:', error);
-      throw new Error(`Failed to create spreadsheet: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-  
-  // Now set up the headers in the sheet
-  const headers = config.columns.map(col => col.name);
-  
+): Promise<boolean> => {
   try {
-    await proxyRequest(
-      'google',
-      `https://sheets.googleapis.com/v4/spreadsheets/${config.sheetId}/values/A1:${String.fromCharCode(65 + headers.length - 1)}1?valueInputOption=RAW`,
-      {
-        method: 'PUT',
-        headers: {
-          'Authorization': createAuthHeader(accessToken)
-        },
-        body: JSON.stringify({
-          range: `A1:${String.fromCharCode(65 + headers.length - 1)}1`,
-          majorDimension: 'ROWS',
-          values: [headers]
-        })
-      }
-    );
-    
-    return config;
+    const response = await apiRequest('/api/google-sheets/update-row', {
+      method: 'PUT',
+      body: JSON.stringify({ sheetId, rowIndex, updates })
+    });
+    if (response.status === 'success') {
+      return true;
+    }
+    throw new Error(response.message || 'Failed to update sheet row');
   } catch (error) {
-    console.error('Failed to set up sheet headers:', error);
-    throw new Error(`Failed to set up sheet headers: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('Error updating sheet row via backend:', error);
+    throw error;
   }
 };
 
 /**
- * Append a row to a Google Sheet
+ * Create a new Google Sheet with the specified columns (calls backend)
+ */
+export const createSheet = async (config: SheetConfig): Promise<{ sheetId: string; spreadsheetUrl: string }> => {
+  try {
+    const response = await apiRequest('/api/google-sheets/create', {
+      method: 'POST',
+      body: JSON.stringify({ config })
+    });
+    if (response.status === 'success' && response.data?.sheetId) {
+      return response.data; // Expecting { sheetId: string, spreadsheetUrl: string }
+    }
+    throw new Error(response.message || 'Failed to create sheet via backend');
+  } catch (error) {
+    console.error('Error creating sheet via backend:', error);
+    throw error;
+  }
+};
+
+/**
+ * Append a row to a Google Sheet (calls backend)
  * @param sheetId The ID of the sheet to append to
  * @param data An object with column IDs as keys and values to append
  */
 export const appendSheetRow = async (sheetId: string, data: Record<string, string>) => {
-  const credentials = await getGoogleSheetsCredentials();
-  const { accessToken } = credentials;
-  
-  // Get the sheet config to know the column structure
-  const sheetConfig = await getSheetConfig(sheetId);
-  if (!sheetConfig) throw new Error('Sheet configuration not found');
-  
-  // Create an array with the values in the correct order based on the config's columns
-  const values = sheetConfig.columns.map(column => data[column.id] || '');
-  
   try {
-    const result = await proxyRequest(
-      'google',
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:A:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': createAuthHeader(accessToken)
-        },
-        body: JSON.stringify({
-          range: 'A:A',
-          majorDimension: 'ROWS',
-          values: [values]
-        })
-      }
-    );
-    
-    return result;
+    const response = await apiRequest('/api/google-sheets/append-row', {
+      method: 'POST',
+      body: JSON.stringify({ sheetId, rowData: data })
+    });
+    if (response.status === 'success') {
+      return response.data; // Return Google API response if needed
+    }
+    throw new Error(response.message || 'Failed to append row via backend');
   } catch (error) {
-    console.error('Failed to append row:', error);
-    throw new Error(`Failed to append row: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('Error appending row via backend:', error);
+    throw error;
   }
 };
 
