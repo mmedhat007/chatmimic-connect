@@ -146,34 +146,50 @@ const getValidCredentials = async (userId) => {
     if (isExpired && refresh_token) {
       logger.info(`Refreshing Google token for user ${userId}`);
       
-      // Use axios directly to refresh the token
       const clientId = process.env.GOOGLE_CLIENT_ID;
       const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
       
       if (!clientId || !clientSecret) {
-        throw new Error('Google OAuth credentials not configured');
+        throw new Error('Google OAuth client credentials (ID or SECRET) not configured on server.');
       }
       
-      const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refresh_token,
-        grant_type: 'refresh_token'
-      }, {
-        headers: {
-          'Content-Type': 'application/json'
+      try {
+        const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refresh_token,
+          grant_type: 'refresh_token'
+        }, {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        const { access_token: new_access_token, expires_in } = tokenResponse.data;
+        logger.info(`Successfully refreshed Google token for user ${userId}`);
+        
+        // Update token in database
+        await updateCredentialsInDb(userId, new_access_token, expires_in);
+        
+        return {
+          access_token: new_access_token,
+          refresh_token: refresh_token // Return original refresh token
+        };
+      } catch (refreshError) {
+        // Log specific error details from Google
+        const googleErrorData = refreshError.response?.data;
+        logger.error(`Failed to refresh Google token for user ${userId}. Google API Error:`, {
+          status: refreshError.response?.status,
+          data: googleErrorData,
+          message: refreshError.message
+        });
+        // Throw a more specific error
+        if (googleErrorData?.error === 'invalid_grant') {
+          throw new Error('Google refresh token is invalid or revoked. User needs to reconnect.');
+        } else {
+          throw new Error(`Failed to refresh Google token: ${googleErrorData?.error_description || refreshError.message}`);
         }
-      });
-      
-      const { access_token: new_access_token, expires_in } = tokenResponse.data;
-      
-      // Update token in database
-      await updateCredentialsInDb(userId, new_access_token, expires_in);
-      
-      return {
-        access_token: new_access_token,
-        refresh_token: refresh_token
-      };
+      }
     }
     
     return credentials;
@@ -253,9 +269,52 @@ const exchangeCodeForTokens = async (code, redirectUri) => {
   }
 };
 
+/**
+ * Creates an authenticated OAuth2 client instance for a user.
+ * IMPORTANT: Ensure credentials have a valid access_token before calling.
+ * @param {Object} credentials - User credentials containing access_token, refresh_token.
+ * @returns {google.auth.OAuth2} Authenticated OAuth2 client
+ */
+const createOAuth2ClientWithCredentials = (credentials) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+
+  if (!clientId || !clientSecret || !redirectUri) {
+    throw new Error('Google OAuth client credentials not configured on server.');
+  }
+
+  const client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+  client.setCredentials(credentials); // Set the user-specific tokens
+  return client;
+};
+
+/**
+ * Gets an authenticated Google Sheets API client for a user.
+ * Handles fetching valid credentials and setting up the client.
+ * @param {string} userId - Firebase user ID
+ * @returns {Promise<google.sheets_v4.Sheets>} Authenticated Sheets client instance
+ */
+const getAuthenticatedSheetsClient = async (userId) => {
+  try {
+    const credentials = await getValidCredentials(userId);
+    if (!credentials || !credentials.access_token) {
+      throw new Error('Could not retrieve valid Google credentials for Sheets API client.');
+    }
+    const authClient = createOAuth2ClientWithCredentials(credentials);
+    return google.sheets({ version: 'v4', auth: authClient });
+  } catch (error) {
+    logger.error(`Failed to get authenticated Sheets client for user ${userId}:`, error);
+    // Re-throw the error, possibly wrapping it if needed
+    throw new Error(`Failed to initialize Google Sheets client: ${error.message}`); 
+  }
+};
+
 module.exports = {
   getCredentialsForUser,
   getValidCredentials,
   updateCredentialsInDb,
-  exchangeCodeForTokens
+  exchangeCodeForTokens,
+  createOAuth2ClientWithCredentials,
+  getAuthenticatedSheetsClient
 }; 

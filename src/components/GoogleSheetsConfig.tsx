@@ -18,7 +18,7 @@ import {
   getGoogleAuthStatus,
   authorizeGoogleSheets,
   revokeGoogleAuth,
-  checkGoogleSheetsConnection
+  testGoogleSheetsConnection
 } from '../services/googleSheets';
 import { startWhatsAppGoogleSheetsIntegration } from '../services/whatsappGoogleIntegration';
 import { auth } from '../services/firebase';
@@ -101,14 +101,9 @@ const GoogleSheetsConfig: React.FC = () => {
         const isAuthorized = await getGoogleAuthStatus();
         setIsGoogleAuthorized(isAuthorized);
 
-        // Check connection status via backend endpoint
-        const statusResult = await checkGoogleSheetsConnection();
-        setIsConnected(statusResult.connected);
-
-        if (statusResult.error) {
-          console.error('Error checking Google Sheets connection status:', statusResult.error);
-          toast.error(`Could not verify Google Sheets connection: ${statusResult.error}`);
-        }
+        // Check connection status via backend endpoint using the new function
+        const isBackendConnected = await testGoogleSheetsConnection();
+        setIsConnected(isBackendConnected);
 
         // Fetch saved configurations from our backend/db regardless of connection status
         const configs = await getAllSheetConfigs();
@@ -119,7 +114,7 @@ const GoogleSheetsConfig: React.FC = () => {
         }
 
         // Fetch user sheets list ONLY if the backend says we are connected
-        if (statusResult.connected) {
+        if (isBackendConnected) {
           try {
             // This call might still fail if the token becomes invalid between backend check and this call
             const sheets = await getUserSheets(); 
@@ -222,16 +217,10 @@ const GoogleSheetsConfig: React.FC = () => {
       };
       
       // Create/update the sheet
-      const { sheetId: newSheetId, spreadsheetUrl } = await createSheet(updatedConfig);
+      const configWithSheet = await createSheet(updatedConfig);
       
-      // Update the config object with the actual sheet ID before saving
-      const configToSave: SheetConfig = {
-        ...updatedConfig,
-        sheetId: newSheetId, // Use the ID returned from createSheet
-      };
-
-      // Save the configuration with the correct sheetId
-      const savedConfig = await saveSheetConfig(configToSave);
+      // Save the configuration
+      const savedConfig = await saveSheetConfig(configWithSheet);
       
       // Update local state
       const configIndex = savedConfigs.findIndex(c => c.sheetId === savedConfig.sheetId);
@@ -397,47 +386,17 @@ const GoogleSheetsConfig: React.FC = () => {
         }
       );
       
-      // Import and call processWhatsAppMessage with the correct parameters
-      try {
-        const { processWhatsAppMessage } = await import('../services/whatsappGoogleIntegration');
-        const result = await processWhatsAppMessage(testPhoneNumber, testMessageId);
-        
-        if (result) {
-          toast.success('Test successful! A test message was processed and data was added to your Google Sheet. Check your spreadsheet to see the results.', 
-            { id: 'test-integration', duration: 6000 }
-          );
-        } else {
-          toast.error('Test message processed but no data was added to sheets. Check that your sheet is correctly configured.', 
-            { id: 'test-integration', duration: 5000 }
-          );
-        }
-      } catch (processingError) {
-        console.error('Error processing test message:', processingError);
-        
-        // Check if it's an AI model error
-        if (processingError.message && processingError.message.includes('model')) {
-          toast.error(
-            'AI model error: Please check your Groq API key and ensure you have access to the deepseek-r1-distill-llama-70b model', 
-            { id: 'test-integration', duration: 5000 }
-          );
-        } else if (processingError.message && processingError.message.includes('permission')) {
-          toast.error(
-            'Google Sheets permission error: Please make sure your Google account has write access to the selected sheet', 
-            { id: 'test-integration', duration: 5000 }
-          );
-        } else if (processingError.message && processingError.message.includes('token')) {
-          toast.error(
-            'Authentication error: Your Google token has expired. Please disconnect and reconnect your Google account', 
-            { id: 'test-integration', duration: 5000 }
-          );
-        } else {
-          toast.error(`Failed to process test message: ${processingError.message || 'Unknown error'}`, 
-            { id: 'test-integration', duration: 5000 }
-          );
-        }
-      }
+      console.log(`[Test Integration] Added message doc ${testMessageId} for ${testPhoneNumber}`);
+
+      // Give feedback that the test message has been sent for processing by the background listener
+      toast('Test message sent for processing. Allow a moment for the sheet to update.', { 
+        id: 'test-integration', // Re-use ID to dismiss loading toast
+        duration: 7000, 
+        icon: 'ℹ️' // Optional: add an info icon
+      });
+
     } catch (error) {
-      console.error('Error setting up test integration:', error);
+      console.error("Error during test integration:", error);
       toast.error('Failed to test Google Sheets integration: ' + (error instanceof Error ? error.message : 'Unknown error'), { id: 'test-integration' });
     }
   };
@@ -605,7 +564,7 @@ const GoogleSheetsConfig: React.FC = () => {
               </div>
               
               <div className="border rounded-md">
-                {newConfig && Array.isArray(newConfig.columns) && newConfig.columns.map((column, index) => (
+                {newConfig.columns.map((column, index) => (
                   <div 
                     key={column.id} 
                     className={`p-4 ${index !== newConfig.columns.length - 1 ? 'border-b' : ''}`}

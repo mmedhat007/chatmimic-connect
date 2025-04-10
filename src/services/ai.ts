@@ -6,6 +6,7 @@ import { SheetColumn } from './googleSheets';
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || '';
 // Update to the correct model name
 const MODEL_NAME = 'deepseek-r1-distill-llama-70b';
+const FALLBACK_MODEL_NAME = 'llama-3.1-70b-versatile'; // Added fallback model
 
 /**
  * Extract data from a WhatsApp message using AI
@@ -73,28 +74,85 @@ ${message}
 
 Return results as JSON.`;
 
-    // Make the API call to Groq
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: MODEL_NAME,
-        messages: [
-          { role: 'system', content: systemMessage },
-          { role: 'user', content: userMessage }
-        ],
-        temperature: 0,
-        max_tokens: 1024
-      })
-    });
+    let response;
+    let modelUsed = MODEL_NAME;
 
-    // Handle API response
+    try {
+      // Initial attempt with the primary model
+      console.log(`[AI Service] Attempting Groq API call with model: ${modelUsed}`);
+      response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: modelUsed,
+          messages: [
+            { role: 'system', content: systemMessage },
+            { role: 'user', content: userMessage }
+          ],
+          temperature: 0,
+          max_tokens: 1024
+        })
+      });
+
+      // Check if the first attempt failed with a server-side error
+      if (!response.ok && response.status >= 500) {
+         console.warn(`[AI Service] Groq API call failed with status ${response.status} using model ${modelUsed}. Retrying with fallback model...`);
+         throw new Error(`Initial Groq call failed with status ${response.status}`); // Trigger catch block for retry
+      }
+
+    } catch (error) {
+      // Check if it's a network error or the server error we threw
+      if (error instanceof TypeError || (error instanceof Error && error.message.includes('Initial Groq call failed'))) {
+          console.warn(`[AI Service] Retrying Groq API call with fallback model: ${FALLBACK_MODEL_NAME}`);
+          modelUsed = FALLBACK_MODEL_NAME;
+          try {
+            response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: modelUsed,
+                messages: [
+                  { role: 'system', content: systemMessage },
+                  { role: 'user', content: userMessage }
+                ],
+                temperature: 0,
+                max_tokens: 1024
+              })
+            });
+          } catch (retryError) {
+             console.error(`[AI Service] Groq API call failed on retry with model ${modelUsed}:`, retryError);
+             throw retryError; // Rethrow the retry error
+          }
+      } else {
+          // If it's another type of error (e.g., 4xx client error), rethrow it directly
+          console.error(`[AI Service] Non-retriable error during initial Groq call with model ${MODEL_NAME}:`, error);
+          throw error;
+      }
+    }
+
+    // Ensure response is defined after potential retry
+    if (!response) {
+        throw new Error('[AI Service] Groq API response is undefined after attempting calls.');
+    }
+
+    // Handle API response (from initial or retry attempt)
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Groq API error: ${errorData.error?.message || JSON.stringify(errorData)}`);
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (jsonError) {
+        // If response is not JSON (e.g., plain text 503 error page)
+        const textError = await response.text();
+        throw new Error(`Groq API error: Status ${response.status}. Response: ${textError}`);
+      }
+      // Use modelUsed in error message for clarity
+      throw new Error(`Groq API error with model ${modelUsed}: ${errorData.error?.message || JSON.stringify(errorData)}`);
     }
 
     const data = await response.json();

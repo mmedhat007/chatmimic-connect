@@ -10,6 +10,7 @@ const admin = require('firebase-admin');
 const axios = require('axios');
 const logger = require('../utils/logger');
 const googleService = require('../services/googleService');
+const { google } = require('googleapis'); // Import googleapis library
 
 const router = express.Router();
 
@@ -69,11 +70,26 @@ router.get('/status', requireAuth, async (req, res) => {
       }
     });
   } catch (error) {
-    logger.error(`Error checking Google Sheets status for user ${req.user.uid}:`, error);
+    logger.logError(error, req, 'Error checking Google Sheets status');
+    // ADDED: Check for auth errors
+    const errorMessage = error.message || '';
+    if (
+        (error.response && (error.response.status === 401 || error.response.status === 403)) ||
+        errorMessage.includes('No valid Google credentials') ||
+        errorMessage.includes('invalid or revoked') ||
+        errorMessage.includes('Authentication failed')
+    ) {
+        return res.status(401).json({
+            status: 'error',
+            message: 'Google API authentication failed. Please try reconnecting your Google account.',
+            error: errorMessage, 
+        });
+    }
+    // Fallback for other errors
     return res.status(500).json({
       status: 'error',
       message: 'Failed to check Google Sheets connection',
-      error: error.message
+      error: errorMessage
     });
   }
 });
@@ -119,11 +135,26 @@ router.post('/disconnect', requireAuth, async (req, res) => {
       message: 'Google Sheets disconnected successfully'
     });
   } catch (error) {
-    logger.error(`Error disconnecting Google Sheets for user ${req.user.uid}:`, error);
+    logger.logError(error, req, 'Error disconnecting Google Sheets');
+    // ADDED: Check for auth errors (less likely here, but good practice)
+    const errorMessage = error.message || '';
+    if (
+        (error.response && (error.response.status === 401 || error.response.status === 403)) ||
+        errorMessage.includes('No valid Google credentials') ||
+        errorMessage.includes('invalid or revoked') ||
+        errorMessage.includes('Authentication failed')
+    ) {
+        return res.status(401).json({
+            status: 'error',
+            message: 'Google API authentication failed during disconnect. Please try again or reconnect.',
+            error: errorMessage, 
+        });
+    }
+    // Fallback for other errors
     return res.status(500).json({
       status: 'error',
       message: 'Failed to disconnect Google Sheets',
-      error: error.message
+      error: errorMessage
     });
   }
 });
@@ -148,26 +179,52 @@ router.get('/test-connection', requireAuth, async (req, res) => {
       });
     }
     
-    // Make a test request to the Google Sheets API
-    const response = await axios.get('https://sheets.googleapis.com/v4/spreadsheets?pageSize=5', {
+    // Make a test request to the Google Drive API (more reliable for connection test)
+    // Changed from sheets.googleapis.com/v4/spreadsheets
+    const testUrl = 'https://www.googleapis.com/drive/v3/files?pageSize=1&fields=kind'; // Minimal query
+    logger.debug(`Testing Google connection for user ${uid} with URL: ${testUrl}`);
+    const response = await axios.get(testUrl, {
       headers: {
         Authorization: `Bearer ${credentials.access_token}`
       }
     });
     
-    return res.json({
-      status: 'success',
-      data: {
-        connected: true,
-        files: response.data.files || []
-      }
-    });
+    // Check if the response kind indicates success
+    if (response.data && response.data.kind === 'drive#fileList') {
+      logger.info(`Google connection test successful for user ${uid}`);
+      return res.json({
+        status: 'success',
+        data: {
+          connected: true
+        }
+      });
+    } else {
+       // If the response is unexpected, treat as failure
+       logger.warn(`Unexpected response during Google connection test for user ${uid}:`, response.data);
+       throw new Error('Unexpected response from Google API during connection test.');
+    }
+
   } catch (error) {
-    logger.error(`Error testing Google Sheets connection for user ${req.user.uid}:`, error);
-    return res.status(401).json({
+    logger.logError(error, req, 'Error testing Google Sheets connection');
+    // ADDED: Check for auth errors
+    const errorMessage = error.message || '';
+    if (
+        (error.response && (error.response.status === 401 || error.response.status === 403)) ||
+        errorMessage.includes('No valid Google credentials') ||
+        errorMessage.includes('invalid or revoked') ||
+        errorMessage.includes('Authentication failed')
+    ) {
+        return res.status(401).json({
+            status: 'error',
+            message: 'Google API authentication failed during connection test. Please try reconnecting.',
+            error: errorMessage, 
+        });
+    }
+    // Fallback for other errors
+    return res.status(500).json({
       status: 'error',
       message: 'Failed to test Google Sheets connection',
-      error: error.message
+      error: errorMessage
     });
   }
 });
@@ -219,314 +276,319 @@ router.get('/list', requireAuth, async (req, res) => {
       },
     });
   } catch (error) {
-    logger.error(`Error fetching Google Sheets list for user ${req.user.uid}:`, error.response?.data || error.message || error);
-    // Handle potential token errors specifically
-    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+    logger.logError(error, req, 'Error fetching Google Sheets list');
+    // ADDED: Check for auth errors
+    const errorMessage = error.message || '';
+    if (
+        (error.response && (error.response.status === 401 || error.response.status === 403)) ||
+        errorMessage.includes('No valid Google credentials') ||
+        errorMessage.includes('invalid or revoked') ||
+        errorMessage.includes('Authentication failed')
+    ) {
         return res.status(401).json({
             status: 'error',
-            message: 'Google API authentication failed. Please try reconnecting your Google account.',
-            error: error.response.data?.error?.message || 'Authentication error',
+            message: 'Google API authentication failed when listing sheets. Please try reconnecting.',
+            error: errorMessage, 
         });
     }
+    // Fallback for other errors
     return res.status(500).json({
       status: 'error',
       message: 'Failed to fetch Google Sheets list',
-      error: error.message,
+      error: errorMessage
     });
   }
 });
 
 /**
- * Create a new Google Sheet based on config
- * POST /api/google-sheets/create
+ * Create a new Google Spreadsheet based on config
+ * POST /api/google-sheets/spreadsheets
  * 
- * Creates a sheet and sets up headers.
+ * Expects config object in body: { name, columns: [{ name }] }
  * Protected route - requires authentication
- * Body: { config: SheetConfig } // SheetConfig should include columns
  */
-router.post('/create', requireAuth, async (req, res) => {
+router.post('/spreadsheets', requireAuth, async (req, res) => {
   const { uid } = req.user;
-  const { config } = req.body;
-
+  const config = req.body;
+  
   if (!config || !config.name || !Array.isArray(config.columns) || config.columns.length === 0) {
-    return res.status(400).json({ status: 'error', message: 'Invalid sheet configuration provided.' });
+      return res.status(400).json({ status: 'error', message: 'Invalid configuration provided for sheet creation.' });
+  }
+  
+  try {
+    logger.info(`Creating new Google Sheet for user ${uid}, name: ${config.name}`);
+    const sheets = await googleService.getAuthenticatedSheetsClient(uid);
+
+    // 1. Create the spreadsheet
+    const spreadsheet = await sheets.spreadsheets.create({
+      requestBody: {
+        properties: { title: config.name },
+        sheets: [{ properties: { title: 'Customer Data' } }] // Default sheet name
+      },
+    });
+
+    const newSheetId = spreadsheet.data.spreadsheetId;
+    if (!newSheetId) {
+        throw new Error('Failed to create spreadsheet: No ID returned from Google API.');
+    }
+    logger.info(`Created sheet ${newSheetId} for user ${uid}`);
+
+    // 2. Set up the headers
+    const headers = config.columns.map((col) => col.name || '');
+    const headerRange = `Customer Data!A1:${String.fromCharCode(65 + headers.length - 1)}1`; // Assuming default sheet name
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: newSheetId,
+      range: headerRange,
+      valueInputOption: 'USER_ENTERED', // or RAW
+      requestBody: {
+        values: [headers],
+      },
+    });
+    logger.info(`Set headers for sheet ${newSheetId}`);
+
+    return res.json({ status: 'success', data: { sheetId: newSheetId } });
+
+  } catch (error) {
+    logger.logError(error, req, 'Error creating Google Sheet');
+    const errorMessage = error.message || '';
+    // Check for specific Google API errors or auth errors
+    if (
+        (error.response && (error.response.status === 401 || error.response.status === 403)) ||
+        errorMessage.includes('invalid or revoked') || // from getValidCredentials
+        errorMessage.includes('Authentication failed')
+    ) {
+        return res.status(401).json({ status: 'error', message: 'Google API authentication failed. Please reconnect.', error: errorMessage });
+    }
+    // Check for quota errors specifically if possible
+    // if (error.code === 429) { return res.status(429).json(...); }
+    return res.status(500).json({ status: 'error', message: 'Failed to create Google Sheet', error: errorMessage });
+  }
+});
+
+/**
+ * Update headers for an existing Google Spreadsheet
+ * PUT /api/google-sheets/spreadsheets/:sheetId/headers
+ * 
+ * Expects config object in body: { columns: [{ name }] }
+ * Protected route - requires authentication
+ */
+router.put('/spreadsheets/:sheetId/headers', requireAuth, async (req, res) => {
+  const { uid } = req.user;
+  const { sheetId } = req.params;
+  const config = req.body;
+
+  if (!sheetId || !config || !Array.isArray(config.columns)) {
+      return res.status(400).json({ status: 'error', message: 'Invalid request: Missing sheetId or columns configuration.' });
   }
 
   try {
-    logger.info(`Creating new Google Sheet for user ${uid}, config name: ${config.name}`);
-    const credentials = await googleService.getValidCredentials(uid);
-    const accessToken = credentials?.access_token;
+    logger.info(`Updating headers for sheet ${sheetId}, user ${uid}`);
+    const sheets = await googleService.getAuthenticatedSheetsClient(uid);
 
-    if (!accessToken) {
-      logger.warn(`No valid Google token for sheet creation, user ${uid}`);
-      return res.status(401).json({ status: 'error', message: 'Invalid or missing Google credentials.' });
-    }
+    const headers = config.columns.map((col) => col.name || '');
+    // Assume headers are in the first row of the first sheet (common pattern)
+    // We might need a way to get the actual first sheet name if it's not default
+    const headerRange = `Sheet1!A1:${String.fromCharCode(65 + headers.length - 1)}1`; 
 
-    // 1. Create the spreadsheet
-    logger.debug(`Calling Google Sheets API to create spreadsheet: ${config.name}`);
-    const createResponse = await axios.post(
-      'https://sheets.googleapis.com/v4/spreadsheets',
-      {
-        properties: { title: config.name },
-        sheets: [{ properties: { title: 'Sheet1' } }] // Default sheet name
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: sheetId,
+      range: headerRange,
+      valueInputOption: 'USER_ENTERED', // or RAW
+      requestBody: {
+        values: [headers],
       },
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    const newSheetId = createResponse.data.spreadsheetId;
-    logger.info(`Spreadsheet created successfully for user ${uid}, ID: ${newSheetId}`);
-
-    // 2. Set up headers
-    const headers = config.columns.map(col => col.name);
-    const headerRange = `Sheet1!A1:${String.fromCharCode(65 + headers.length - 1)}1`;
-    logger.debug(`Setting headers for sheet ${newSheetId}: ${headerRange}`);
-    
-    await axios.put(
-      `https://sheets.googleapis.com/v4/spreadsheets/${newSheetId}/values/${encodeURIComponent(headerRange)}?valueInputOption=RAW`,
-      {
-        range: headerRange,
-        majorDimension: 'ROWS',
-        values: [headers]
-      },
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    logger.debug(`Headers set successfully for sheet ${newSheetId}`);
-
-    // Return the new sheet ID
-    res.json({ 
-      status: 'success', 
-      data: { 
-        sheetId: newSheetId, 
-        spreadsheetUrl: createResponse.data.spreadsheetUrl 
-      } 
     });
+    logger.info(`Updated headers for sheet ${sheetId}`);
+
+    // Return success, indicating headers were updated (sheetId already known)
+    return res.json({ status: 'success', data: { sheetId: sheetId } }); 
 
   } catch (error) {
-    logger.error(`Error creating Google Sheet for user ${uid}:`, error.response?.data || error.message || error);
-    const status = error.response?.status || 500;
-    const message = error.response?.data?.error?.message || error.message || 'Failed to create Google Sheet.';
-    res.status(status).json({ 
-      status: 'error', 
-      message: message,
-      error: error.response?.data?.error 
+    logger.logError(error, req, `Error updating headers for sheet ${sheetId}`);
+    const errorMessage = error.message || '';
+    if (
+        (error.response && (error.response.status === 401 || error.response.status === 403)) ||
+        errorMessage.includes('invalid or revoked') ||
+        errorMessage.includes('Authentication failed')
+    ) {
+        return res.status(401).json({ status: 'error', message: 'Google API authentication failed. Please reconnect.', error: errorMessage });
+    }
+    return res.status(500).json({ status: 'error', message: 'Failed to update sheet headers', error: errorMessage });
+  }
+});
+
+/**
+ * Find a contact row index by phone number
+ * POST /api/google-sheets/spreadsheets/:sheetId/find
+ * 
+ * Expects body: { phoneNumber }
+ * Protected route - requires authentication
+ */
+router.post('/spreadsheets/:sheetId/find', requireAuth, async (req, res) => {
+  const { uid } = req.user;
+  const { sheetId } = req.params;
+  const { phoneNumber } = req.body;
+
+  if (!sheetId || !phoneNumber) {
+    return res.status(400).json({ status: 'error', message: 'Missing sheetId or phoneNumber' });
+  }
+
+  try {
+    logger.info(`Finding contact ${phoneNumber} in sheet ${sheetId} for user ${uid}`);
+
+    // 1. Get Sheet Configuration from Firestore to find the phone column
+    let phoneColumnIndex = -1;
+    try {
+      const userDoc = await admin.firestore().collection('Users').doc(uid).get();
+      if (userDoc.exists) {
+        const sheetConfigs = userDoc.data()?.workflows?.whatsapp_agent?.sheetConfigs || [];
+        const config = sheetConfigs.find((c) => c.sheetId === sheetId);
+        if (config && Array.isArray(config.columns)) {
+          phoneColumnIndex = config.columns.findIndex(
+            (col) => col.type === 'phone' || col.name?.toLowerCase().includes('phone')
+          );
+        }
+      }
+    } catch (fsError) {
+      logger.error(`Firestore error getting config for sheet ${sheetId}, user ${uid}:`, fsError);
+      throw new Error('Could not retrieve sheet configuration to find phone column.');
+    }
+
+    if (phoneColumnIndex === -1) {
+      logger.warn(`No phone column configured for sheet ${sheetId}, user ${uid}. Cannot search.`);
+      // Return null index, as we can't search without the column info
+      return res.json({ status: 'success', data: { rowIndex: null } }); 
+    }
+
+    // 2. Get Authenticated Sheets Client
+    const sheets = await googleService.getAuthenticatedSheetsClient(uid);
+
+    // 3. Get Phone Column Data from Sheet
+    const phoneColumnLetter = String.fromCharCode(65 + phoneColumnIndex);
+    // Assume data is in the first sheet (Sheet1) - might need enhancement later
+    const range = `Sheet1!${phoneColumnLetter}:${phoneColumnLetter}`;
+    logger.debug(`Reading range ${range} from sheet ${sheetId}`);
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: range,
     });
+
+    // 4. Search for Phone Number
+    let foundRowIndex = null; // Initialize as null
+    const values = response.data.values;
+    if (values) {
+      // Start from index 1 to skip header row
+      for (let i = 1; i < values.length; i++) {
+        if (values[i] && values[i][0] === phoneNumber) {
+          foundRowIndex = i + 1; // Google Sheets rows are 1-based
+          break;
+        }
+      }
+    }
+
+    logger.info(`Search for ${phoneNumber} in sheet ${sheetId}: ${foundRowIndex ? `Found at row ${foundRowIndex}` : 'Not found'}`);
+    return res.json({ status: 'success', data: { rowIndex: foundRowIndex } });
+
+  } catch (error) {
+    logger.logError(error, req, `Error finding contact ${phoneNumber} in sheet ${sheetId}`);
+    const errorMessage = error.message || '';
+    if (
+        (error.response && (error.response.status === 401 || error.response.status === 403)) ||
+        errorMessage.includes('invalid or revoked') ||
+        errorMessage.includes('Authentication failed') ||
+        errorMessage.includes('Could not retrieve valid Google credentials')
+    ) {
+        return res.status(401).json({ status: 'error', message: 'Google API authentication failed. Please reconnect.', error: errorMessage });
+    }
+    // Handle specific Google API errors like invalid range or sheet not found
+    if (error.code === 400 || error.message.includes('Unable to parse range') || error.message.includes('Requested entity was not found')) {
+       return res.status(400).json({ status: 'error', message: 'Error accessing Google Sheet. Check Sheet ID and configuration.', error: errorMessage });
+    }
+    return res.status(500).json({ status: 'error', message: 'Failed to find contact in Google Sheet', error: errorMessage });
   }
 });
 
 /**
  * Append a row to a Google Sheet
- * POST /api/google-sheets/append-row
+ * POST /api/google-sheets/spreadsheets/:sheetId/values:append
  * 
- * Appends data according to the sheet configuration.
+ * Expects body: { data: { columnId: value, ... } }
  * Protected route - requires authentication
- * Body: { sheetId: string, rowData: Record<string, string> } // rowData keys are column IDs
  */
-router.post('/append-row', requireAuth, async (req, res) => {
+router.post('/spreadsheets/:sheetId/values:append', requireAuth, async (req, res) => {
   const { uid } = req.user;
-  const { sheetId, rowData } = req.body;
+  const { sheetId } = req.params;
+  const { data } = req.body;
 
-  if (!sheetId || !rowData || typeof rowData !== 'object') {
-    return res.status(400).json({ status: 'error', message: 'Missing sheetId or rowData.' });
+  if (!sheetId || !data || typeof data !== 'object') {
+    return res.status(400).json({ status: 'error', message: 'Missing sheetId or row data' });
   }
 
   try {
     logger.info(`Appending row to sheet ${sheetId} for user ${uid}`);
-    const credentials = await googleService.getValidCredentials(uid);
-    const accessToken = credentials?.access_token;
 
-    if (!accessToken) {
-      logger.warn(`No valid Google token for appending row, user ${uid}, sheet ${sheetId}`);
-      return res.status(401).json({ status: 'error', message: 'Invalid or missing Google credentials.' });
-    }
-
-    // Get sheet config to order the values correctly
-    const userDoc = await admin.firestore().collection('Users').doc(uid).get();
-    const sheetConfigs = userDoc.data()?.workflows?.whatsapp_agent?.sheetConfigs || [];
-    const config = sheetConfigs.find(c => c.sheetId === sheetId);
-
-    if (!config || !Array.isArray(config.columns)) {
-      return res.status(404).json({ status: 'error', message: `Configuration for sheet ${sheetId} not found or invalid.` });
-    }
-
-    const values = config.columns.map(col => rowData[col.id] || '');
-
-    logger.debug(`Calling Google Sheets API to append row to sheet ${sheetId}`);
-    const appendResponse = await axios.post(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-      {
-        range: 'Sheet1!A1', // Append after the last row in Sheet1
-        majorDimension: 'ROWS',
-        values: [values]
-      },
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    logger.debug(`Row appended successfully to sheet ${sheetId}`);
-
-    res.json({ status: 'success', data: appendResponse.data });
-
-  } catch (error) {
-    logger.error(`Error appending row to sheet ${sheetId} for user ${uid}:`, error.response?.data || error.message || error);
-    const status = error.response?.status || 500;
-    const message = error.response?.data?.error?.message || error.message || 'Failed to append row.';
-    res.status(status).json({ 
-      status: 'error', 
-      message: message,
-      error: error.response?.data?.error 
-    });
-  }
-});
-
-/**
- * Update a row in a Google Sheet
- * PUT /api/google-sheets/update-row
- * 
- * Updates specific cells in a given row.
- * Protected route - requires authentication
- * Body: { sheetId: string, rowIndex: number, updates: Record<string, string> } // updates keys are column IDs, rowIndex is 1-based
- */
-router.put('/update-row', requireAuth, async (req, res) => {
-  const { uid } = req.user;
-  const { sheetId, rowIndex, updates } = req.body;
-
-  if (!sheetId || !rowIndex || !updates || typeof updates !== 'object' || typeof rowIndex !== 'number' || rowIndex < 1) {
-    return res.status(400).json({ status: 'error', message: 'Missing or invalid sheetId, rowIndex, or updates.' });
-  }
-
-  try {
-    logger.info(`Updating row ${rowIndex} in sheet ${sheetId} for user ${uid}`);
-    const credentials = await googleService.getValidCredentials(uid);
-    const accessToken = credentials?.access_token;
-
-    if (!accessToken) {
-       logger.warn(`No valid Google token for updating row, user ${uid}, sheet ${sheetId}`);
-      return res.status(401).json({ status: 'error', message: 'Invalid or missing Google credentials.' });
-    }
-
-    // Get sheet config to map column IDs to letters
-    const userDoc = await admin.firestore().collection('Users').doc(uid).get();
-    const sheetConfigs = userDoc.data()?.workflows?.whatsapp_agent?.sheetConfigs || [];
-    const config = sheetConfigs.find(c => c.sheetId === sheetId);
-
-    if (!config || !Array.isArray(config.columns)) {
-      return res.status(404).json({ status: 'error', message: `Configuration for sheet ${sheetId} not found or invalid.` });
-    }
-
-    const requests = [];
-    for (const [columnId, value] of Object.entries(updates)) {
-      const columnIndex = config.columns.findIndex(col => col.id === columnId);
-      if (columnIndex !== -1) {
-        const columnLetter = String.fromCharCode(65 + columnIndex);
-        const range = `Sheet1!${columnLetter}${rowIndex}`;
-        requests.push({
-          range: range,
-          values: [[value]] // Value needs to be in a 2D array
-        });
+    // 1. Get Sheet Configuration from Firestore to determine column order
+    let columnOrder = []; // Initialize as empty array
+    try {
+      const userDoc = await admin.firestore().collection('Users').doc(uid).get();
+      if (userDoc.exists) {
+        const sheetConfigs = userDoc.data()?.workflows?.whatsapp_agent?.sheetConfigs || [];
+        const config = sheetConfigs.find((c) => c.sheetId === sheetId);
+        if (config && Array.isArray(config.columns)) {
+          columnOrder = config.columns.map((col) => col.id); // Get the IDs in order
+        }
       }
+    } catch (fsError) {
+      logger.error(`Firestore error getting config for sheet ${sheetId}, user ${uid}:`, fsError);
+      throw new Error('Could not retrieve sheet configuration to determine column order.');
     }
 
-    if (requests.length === 0) {
-      return res.status(400).json({ status: 'error', message: 'No valid column updates provided.' });
+    if (columnOrder.length === 0) {
+      logger.warn(`No columns configured for sheet ${sheetId}, user ${uid}. Cannot append row.`);
+      throw new Error('Sheet configuration has no columns defined.');
     }
 
-    logger.debug(`Calling Google Sheets API to batch update values in sheet ${sheetId}`);
-    const batchUpdateResponse = await axios.post(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchUpdate`,
-      {
-        valueInputOption: 'USER_ENTERED',
-        data: requests
+    // 2. Get Authenticated Sheets Client
+    const sheets = await googleService.getAuthenticatedSheetsClient(uid);
+
+    // 3. Prepare Row Data in Correct Order
+    const rowValues = columnOrder.map(columnId => data[columnId] || ''); // Map data to ordered array
+
+    // 4. Append Row to Sheet
+    // Assume appending to the first sheet (Sheet1) - might need enhancement later
+    const range = 'Sheet1!A1'; // Range for append usually just needs the sheet name
+    logger.debug(`Appending row to sheet ${sheetId}, range ${range}`);
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: sheetId,
+      range: range,
+      valueInputOption: 'USER_ENTERED', // Or RAW
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: [rowValues],
       },
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    logger.debug(`Batch update successful for row ${rowIndex} in sheet ${sheetId}`);
+    });
 
-    res.json({ status: 'success', data: batchUpdateResponse.data });
+    logger.info(`Successfully appended row to sheet ${sheetId}`);
+    return res.json({ status: 'success', message: 'Row appended successfully' });
 
   } catch (error) {
-    logger.error(`Error updating row ${rowIndex} in sheet ${sheetId} for user ${uid}:`, error.response?.data || error.message || error);
-    const status = error.response?.status || 500;
-    const message = error.response?.data?.error?.message || error.message || 'Failed to update row.';
-    res.status(status).json({ 
-      status: 'error', 
-      message: message,
-      error: error.response?.data?.error 
-    });
-  }
-});
-
-/**
- * Find Contact Row Index in Sheet by Phone
- * GET /api/google-sheets/find-contact
- * 
- * Searches a sheet for a phone number and returns the row index.
- * Protected route - requires authentication
- * Query Params: sheetId, phoneNumber
- */
-router.get('/find-contact', requireAuth, async (req, res) => {
-  const { uid } = req.user;
-  const { sheetId, phoneNumber } = req.query;
-
-  if (!sheetId || !phoneNumber) {
-    return res.status(400).json({ status: 'error', message: 'Missing sheetId or phoneNumber query parameter.' });
-  }
-
-  try {
-    logger.info(`Finding contact ${phoneNumber} in sheet ${sheetId} for user ${uid}`);
-    const credentials = await googleService.getValidCredentials(uid);
-    const accessToken = credentials?.access_token;
-
-    if (!accessToken) {
-       logger.warn(`No valid Google token for finding contact, user ${uid}, sheet ${sheetId}`);
-      return res.status(401).json({ status: 'error', message: 'Invalid or missing Google credentials.' });
+    logger.logError(error, req, `Error appending row to sheet ${sheetId}`);
+    const errorMessage = error.message || '';
+    if (
+        (error.response && (error.response.status === 401 || error.response.status === 403)) ||
+        errorMessage.includes('invalid or revoked') ||
+        errorMessage.includes('Authentication failed') ||
+        errorMessage.includes('Could not retrieve valid Google credentials')
+    ) {
+        return res.status(401).json({ status: 'error', message: 'Google API authentication failed. Please reconnect.', error: errorMessage });
     }
-
-    // Get sheet config to find the phone column
-    const userDoc = await admin.firestore().collection('Users').doc(uid).get();
-    const sheetConfigs = userDoc.data()?.workflows?.whatsapp_agent?.sheetConfigs || [];
-    const config = sheetConfigs.find(c => c.sheetId === sheetId);
-
-    if (!config || !Array.isArray(config.columns)) {
-      return res.status(404).json({ status: 'error', message: `Configuration for sheet ${sheetId} not found or invalid.` });
+    if (error.code === 400 || error.message.includes('Unable to parse range') || error.message.includes('Requested entity was not found')) {
+       return res.status(400).json({ status: 'error', message: 'Error accessing Google Sheet. Check Sheet ID and configuration.', error: errorMessage });
     }
-
-    const phoneColumnIndex = config.columns.findIndex(col => 
-        col.type === 'phone' || col.name.toLowerCase().includes('phone')
-    );
-
-    if (phoneColumnIndex === -1) {
-       logger.warn(`No phone column found in config for sheet ${sheetId}`);
-      return res.json({ status: 'success', data: { rowIndex: null, message: 'No phone column configured.' } });
-    }
-    
-    const phoneColumnLetter = String.fromCharCode(65 + phoneColumnIndex);
-    const range = `Sheet1!${phoneColumnLetter}:${phoneColumnLetter}`;
-    
-    logger.debug(`Calling Google Sheets API to get values from range ${range} in sheet ${sheetId}`);
-    const valuesResponse = await axios.get(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-
-    const values = valuesResponse.data.values || [];
-    let rowIndex = null;
-    // Start search from row 2 (index 1) to skip header
-    for (let i = 1; i < values.length; i++) {
-      if (values[i] && values[i][0] === phoneNumber) {
-        rowIndex = i + 1; // 1-based index
-        break;
-      }
-    }
-    
-    logger.debug(`Search for ${phoneNumber} in sheet ${sheetId} completed. Found at row: ${rowIndex}`);
-    res.json({ status: 'success', data: { rowIndex: rowIndex } });
-
-  } catch (error) {
-    logger.error(`Error finding contact ${phoneNumber} in sheet ${sheetId} for user ${uid}:`, error.response?.data || error.message || error);
-    const status = error.response?.status || 500;
-    const message = error.response?.data?.error?.message || error.message || 'Failed to find contact.';
-    res.status(status).json({ 
-      status: 'error', 
-      message: message,
-      error: error.response?.data?.error 
-    });
+    return res.status(500).json({ status: 'error', message: 'Failed to append row to Google Sheet', error: errorMessage });
   }
 });
 

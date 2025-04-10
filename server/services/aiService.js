@@ -52,6 +52,18 @@ const generateEmbeddings = async (text) => {
  */
 const extractDataWithGroq = async (message, fields) => {
   try {
+    // >>> ADDED: Input validation for fields array
+    if (!Array.isArray(fields)) {
+      logger.error('[extractDataWithGroq] Invalid input: \'fields\' is not an array.', { receivedFields: fields });
+      throw new Error('Invalid fields configuration: expected an array.');
+    }
+    if (fields.length === 0) {
+      logger.warn('[extractDataWithGroq] Input warning: \'fields\' array is empty. No data will be extracted.');
+      // Return empty object as no fields were requested
+      return {}; 
+    }
+    // <<< END VALIDATION
+
     logger.debug('Extracting data with Groq', { 
       messageLength: message.length,
       fieldsCount: fields.length
@@ -59,6 +71,13 @@ const extractDataWithGroq = async (message, fields) => {
     
     // Prepare the system message
     const fieldPrompts = fields.map(field => {
+      // >>> ADDED: Validate individual field structure
+      if (!field || typeof field !== 'object' || !field.name || !field.type) {
+        logger.warn('[extractDataWithGroq] Skipping invalid field structure within fields array:', { field });
+        return null; // Skip this invalid field
+      }
+      // <<< END VALIDATION
+      
       let instructions = '';
       
       switch (field.type) {
@@ -79,10 +98,16 @@ const extractDataWithGroq = async (message, fields) => {
       }
       
       return `- "${field.name}": ${instructions}`;
-    }).join('\n');
+    }).filter(prompt => prompt !== null); // Filter out null prompts from invalid fields
     
+    // If all fields were invalid
+    if (fieldPrompts.length === 0) {
+        logger.warn('[extractDataWithGroq] All provided fields had invalid structure. Cannot proceed.');
+        return {};
+    }
+
     const systemMessage = `You are a data extraction assistant. Extract the following fields from the customer message:
-${fieldPrompts}
+${fieldPrompts.join('\n')}
 
 Respond with a valid JSON object where keys match exactly the field names provided above and values are the extracted data.
 If a field can't be extracted, use an empty string. Be concise and only extract what's explicitly mentioned.`;
