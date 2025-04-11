@@ -2,9 +2,9 @@ import { getCurrentUser } from './firebase';
 import { doc, getDoc, collection, onSnapshot, query, where, getDocs, orderBy, limit, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { Message, Contact, SheetConfig as TypesSheetConfig } from '../types';
-import { extractDataFromMessage } from './ai';
-import { getAllSheetConfigs, appendSheetRow, getSheetConfig, getUserSheets, updateSheetRow, findContactInSheet, SheetConfig } from './googleSheets';
+import { getAllSheetConfigs, appendSheetRow, getSheetConfig, getUserSheets, updateSheetRow, findContactInSheet, SheetConfig, SheetColumn } from './googleSheets';
 import { getContactByPhone, updateContact, updateContactField } from './firebase';
+import { apiRequest } from '../utils/api';
 
 // Interface for processed messages to avoid duplicate processing
 interface ProcessedMessage {
@@ -147,10 +147,15 @@ export const startWhatsAppGoogleSheetsIntegration = async (): Promise<() => void
           const messageDoc = change.doc;
           const messageData = messageDoc.data();
           
-          // Create a properly typed message object
+          // ADD CHECK: Skip if it's a test message flagged by the button
+          if (messageData.isTestMessage === true) {
+             console.log(`[Listener] Skipping test message ${messageDoc.id}`);
+             continue; // Go to the next message change
+          }
+          
           const message: Message = {
             id: messageDoc.id,
-            ...messageData as any // Cast to any first since Firestore data might not perfectly match our type
+            ...messageData as any
           };
           
           // Skip messages not from the customer
@@ -290,15 +295,21 @@ const processMessageWithConfig = async (message: Message, contact: Contact, conf
  */
 const checkIfMessageShowsInterest = async (messageContent: string): Promise<boolean> => {
   try {
-    const interestCheck = await extractDataFromMessage(messageContent, [{
-      id: 'interest',
-      name: 'Interest Detection',
-      description: 'Detect if customer shows interest in products or services',
-      type: 'text',
-      aiPrompt: 'Does this message show clear interest in products or services? Answer yes or no.'
-    }]);
+    const interestCheck = await apiRequest('/api/ai/extract-data', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: messageContent,
+        fields: [{
+          id: 'interest',
+          name: 'Interest Detection',
+          description: 'Detect if customer shows interest in products or services',
+          type: 'text',
+          aiPrompt: 'Does this message show clear interest in products or services? Answer yes or no.'
+        }]
+      })
+    });
     
-    return interestCheck.interest?.toLowerCase() === 'yes';
+    return interestCheck.data?.interest?.toLowerCase() === 'yes';
   } catch (error) {
     console.error('Error checking if message shows interest:', error);
     return false;
@@ -310,79 +321,77 @@ const checkIfMessageShowsInterest = async (messageContent: string): Promise<bool
  */
 const addContactToSheet = async (message: Message, contact: Contact, config: SheetConfig) => {
   try {
-    // Create a unique ID for this sheet+contact combination
-    const uniqueId = `${config.sheetId}_${contact.phoneNumber}`;
-    
-    // Check our local cache first to avoid unnecessary API calls
-    if (addedContacts[config.sheetId]?.has(contact.phoneNumber)) {
-      console.log(`Contact ${contact.phoneNumber} already processed for sheet ${config.sheetId} (cached). Updating instead...`);
-      return updateContactInSheet(message, contact, config);
+    // First, check if the contact already exists (optional, depends on desired logic)
+    // const existingRow = await findContactInSheet(config.sheetId, contact.phoneNumber);
+    // if (existingRow) {
+    //   console.log(`Contact ${contact.phoneNumber} already exists in sheet ${config.name}, skipping add.`);
+    //   return; // Or call update logic?
+    // }
+
+    // Call the backend AI service to extract data
+    console.log(`[Whatsapp Integration] Calling backend AI service to extract data for message: ${message.id}`);
+    const aiResponse = await apiRequest('/api/ai/extract-data', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: message.message || '',
+        fields: config.columns // Pass the column configuration as fields
+      })
+    });
+
+    if (!aiResponse || aiResponse.status !== 'success' || !aiResponse.data) {
+      throw new Error(`Backend AI extraction failed: ${aiResponse?.message || 'No data returned'}`);
     }
     
-    // Check if contact already exists in the sheet
-    const existingRow = await findContactInSheet(config.sheetId, contact.phoneNumber);
-    
-    if (existingRow) {
-      console.log(`Contact ${contact.phoneNumber} already exists in sheet at row ${existingRow}. Updating...`);
-      
-      // Add to our tracking to avoid duplicate API calls in the future
-      if (!addedContacts[config.sheetId]) {
-        addedContacts[config.sheetId] = new Set();
-      }
-      addedContacts[config.sheetId].add(contact.phoneNumber);
-      
-      return updateContactInSheet(message, contact, config);
-    }
-    
-    // Extract data from message
-    const extractedData = await extractDataFromMessage(message.message, config.columns);
-    
-    // Prepare row data
-    const rowData: Record<string, string> = {};
-    
-    // Process each column
+    const extractedData = aiResponse.data as Record<string, string>;
+    console.log('[Whatsapp Integration] Extracted data from backend AI:', extractedData);
+
+    // Prepare the row data based on extracted info and config
+    const rowData: Record<string, any> = {};
     for (const column of config.columns) {
-      // Auto-populate phone number
-      if (column.type === 'phone' || column.name.toLowerCase().includes('phone')) {
-        rowData[column.id] = contact.phoneNumber || 'N/A';
-        continue;
+      // Prioritize extracted data, fallback based on type or default
+      if (extractedData[column.id] !== undefined && extractedData[column.id] !== 'N/A') {
+        rowData[column.name] = extractedData[column.id];
+      } else {
+        // Add default values or specific logic based on column type if AI fails
+        switch (column.type) {
+          case 'phone':
+            rowData[column.name] = contact.phoneNumber; // Use contact's phone number
+            break;
+          case 'timestamp':
+            rowData[column.name] = new Date(message.timestamp).toISOString(); // Use message timestamp
+            break;
+          case 'inquiry': // Maybe use full message if inquiry extraction fails?
+             rowData[column.name] = message.message || ''; 
+             break;
+          // Add other default fallbacks as needed
+          default:
+            rowData[column.name] = ''; // Default to empty string if not found and no specific fallback
+        }
       }
-      
-      // Handle name fields - use contact name or extracted name
-      if (column.type === 'name' || column.name.toLowerCase().includes('name')) {
-        rowData[column.id] = contact.contactName || extractedData.customerName || extractedData[column.id] || 'N/A';
-        continue;
-      }
-      
-      // Handle inquiry fields - use current message
-      if (column.type === 'inquiry') {
-        rowData[column.id] = message.message || 'N/A';
-        continue;
-      }
-      
-      // For other fields, use extracted data
-      rowData[column.id] = extractedData[column.id] || 'N/A';
     }
     
-    // Add timestamp
-    rowData['timestamp'] = new Date().toISOString();
-    
+    // Ensure essential fields have values even if AI failed
+    const phoneField = config.columns.find(c => c.type === 'phone');
+    if (phoneField && !rowData[phoneField.name]) {
+        rowData[phoneField.name] = contact.phoneNumber;
+    }
+    const timestampField = config.columns.find(c => c.type === 'timestamp');
+    if (timestampField && !rowData[timestampField.name]) {
+         rowData[timestampField.name] = new Date(message.timestamp).toISOString();
+    }
+
+
     console.log(`Adding new row to sheet for ${contact.phoneNumber} with data:`, rowData);
     
-    // Append to sheet
+    // Append the data to the sheet via backend service call
     await appendSheetRow(config.sheetId, rowData);
+    
     console.log(`Added row to sheet "${config.name}" for ${contact.phoneNumber}`);
-    
-    // Mark this contact as added for this sheet
-    if (!addedContacts[config.sheetId]) {
-      addedContacts[config.sheetId] = new Set();
-    }
-    addedContacts[config.sheetId].add(contact.phoneNumber);
-    
-    return true;
+
   } catch (error) {
     console.error('Error adding contact to sheet:', error);
-    throw error;
+    // Propagate error or handle specifically
+    throw error; 
   }
 };
 
@@ -391,74 +400,65 @@ const addContactToSheet = async (message: Message, contact: Contact, config: She
  */
 const updateContactInSheet = async (message: Message, contact: Contact, config: SheetConfig) => {
   try {
-    // Find the contact in the sheet
-    const rowIndex = await findContactInSheet(config.sheetId, contact.phoneNumber);
+    // Find the existing row for the contact
+    const existingRowIndex = await findContactInSheet(config.sheetId, contact.phoneNumber);
     
-    if (!rowIndex) {
-      console.log(`Contact ${contact.phoneNumber} not found in sheet. Skipping update.`);
-      return false;
+    if (existingRowIndex === null) {
+      console.log(`Contact ${contact.phoneNumber} not found in sheet ${config.name} for update, skipping.`);
+      // Optionally, call addContactToSheet here if desired behaviour is to add if not found
+      // await addContactToSheet(message, contact, config);
+      return; 
+    }
+
+    // Call backend AI service to extract data from the new message
+     console.log(`[Whatsapp Integration] Calling backend AI service to extract data for update: ${message.id}`);
+    const aiResponse = await apiRequest('/api/ai/extract-data', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: message.message || '',
+        fields: config.columns
+      })
+    });
+
+    if (!aiResponse || aiResponse.status !== 'success' || !aiResponse.data) {
+      throw new Error(`Backend AI extraction failed for update: ${aiResponse?.message || 'No data returned'}`);
     }
     
-    // Extract data from message
-    const extractedData = await extractDataFromMessage(message.message, config.columns);
-    
-    // Create an update object with only the fields that have meaningful extractions
-    const updates: Record<string, string> = {};
-    let hasUpdates = false;
-    
+    const extractedData = aiResponse.data as Record<string, string>;
+    console.log('[Whatsapp Integration] Extracted data for update from backend AI:', extractedData);
+
+    // Prepare the data for update - only include fields extracted successfully (not 'N/A')
+    const updateData: Record<string, any> = {};
+    let hasUpdate = false;
     for (const column of config.columns) {
-      const extractedValue = extractedData[column.id];
-      
-      // Skip phone number and timestamp - these don't change
-      if (column.type === 'phone' || column.name.toLowerCase().includes('phone') || 
-          column.name.toLowerCase() === 'timestamp') {
-        continue;
-      }
-      
-      // Update name if extracted and better than current
-      if ((column.type === 'name' || column.name.toLowerCase().includes('name')) && 
-          extractedValue && extractedValue !== 'N/A') {
-        updates[column.id] = extractedValue;
-        hasUpdates = true;
-        
-        // Also update the contact in Firestore if we found a better name
-        if (extractedValue !== contact.contactName) {
-          try {
-            await updateContactField(contact.phoneNumber, 'contactName', extractedValue);
-            console.log(`Updated contact name for ${contact.phoneNumber} to ${extractedValue}`);
-          } catch (error) {
-            console.error('Error updating contact name in Firestore:', error);
-          }
-        }
-        continue;
-      }
-      
-      // For all other fields, update if we have meaningful data
-      if (extractedValue && extractedValue !== 'N/A') {
-        updates[column.id] = extractedValue;
-        hasUpdates = true;
-        
-        // For product or inquiry, also update as tags or lastMessage
-        if (column.type === 'product' && !contact.tags?.includes(extractedValue)) {
-          try {
-            const updatedTags = [...(contact.tags || []), extractedValue];
-            await updateContactField(contact.phoneNumber, 'tags', updatedTags);
-            console.log(`Added tag ${extractedValue} to ${contact.phoneNumber}`);
-          } catch (error) {
-            console.error('Error updating contact tags in Firestore:', error);
-          }
-        }
+      if (extractedData[column.id] !== undefined && extractedData[column.id] !== 'N/A' && extractedData[column.id] !== '') {
+        // Consider adding logic here to compare with existing data if needed
+        // Only update if the extracted value is different from the current value in the sheet?
+        // This would require fetching the current row data first.
+        updateData[column.name] = extractedData[column.id];
+        hasUpdate = true;
       }
     }
     
-    // Update the sheet if we have changes
-    if (hasUpdates) {
-      await updateSheetRow(config.sheetId, rowIndex, updates);
-      console.log(`Updated row ${rowIndex} in sheet "${config.name}" for ${contact.phoneNumber}`);
-      return true;
+    // Update timestamp if present in config
+    const timestampColumn = config.columns.find(col => col.type === 'timestamp');
+    if (timestampColumn) {
+        updateData[timestampColumn.name] = new Date(message.timestamp).toISOString();
+        hasUpdate = true;
     }
+
+    if (!hasUpdate) {
+      console.log(`No new data extracted to update for ${contact.phoneNumber} in sheet ${config.name}.`);
+      return;
+    }
+
+    console.log(`Updating row ${existingRowIndex} for ${contact.phoneNumber} in sheet ${config.name} with data:`, updateData);
     
-    return false;
+    // Update the row in the sheet via backend service call
+    await updateSheetRow(config.sheetId, existingRowIndex, updateData);
+    
+    console.log(`Updated row for ${contact.phoneNumber} in sheet "${config.name}"`);
+
   } catch (error) {
     console.error('Error updating contact in sheet:', error);
     throw error;
@@ -625,8 +625,21 @@ export const processMessageForSheets = async (message: Message, contact: Contact
 
   try {
     // Extract data from message
-    const extractedData = await extractDataFromMessage(message.content, sheetConfig.columns);
+    const extractedData = await apiRequest('/api/ai/extract-data', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: message.content,
+        fields: sheetConfig.columns
+      })
+    });
     
+    if (!extractedData || extractedData.status !== 'success' || !extractedData.data) {
+      throw new Error(`Backend AI extraction failed: ${extractedData?.message || 'No data returned'}`);
+    }
+    
+    const extractedDataObj = extractedData.data as Record<string, string>;
+    console.log('[Whatsapp Integration] Extracted data from backend AI:', extractedDataObj);
+
     // Prepare row data
     const rowData: Record<string, string> = {};
     
@@ -641,7 +654,7 @@ export const processMessageForSheets = async (message: Message, contact: Contact
       // Handle name fields
       if (column.type === 'name' || column.name.toLowerCase().includes('name')) {
         // Try different name sources in order of priority
-        rowData[column.id] = extractedData.customerName || 
+        rowData[column.id] = extractedDataObj.customerName || 
                             contact.name || 
                             contact.contactName || 
                             'N/A';
@@ -649,7 +662,7 @@ export const processMessageForSheets = async (message: Message, contact: Contact
       }
       
       // For other fields, use extracted data
-      rowData[column.id] = extractedData[column.id] || 'N/A';
+      rowData[column.id] = extractedDataObj[column.id] || 'N/A';
     }
     
     // Add timestamp
@@ -663,18 +676,18 @@ export const processMessageForSheets = async (message: Message, contact: Contact
       const updates: Partial<Contact> = {};
       
       // Update contact name if we extracted one and it's different from current
-      if (extractedData.customerName && 
-          extractedData.customerName !== contact.name && 
-          extractedData.customerName !== contact.contactName) {
-        updates.name = extractedData.customerName;
-        updates.contactName = extractedData.customerName;
+      if (extractedDataObj.customerName && 
+          extractedDataObj.customerName !== contact.name && 
+          extractedDataObj.customerName !== contact.contactName) {
+        updates.name = extractedDataObj.customerName;
+        updates.contactName = extractedDataObj.customerName;
       }
       
       // Update any other relevant contact fields
-      if (extractedData.productInterest) {
+      if (extractedDataObj.productInterest) {
         updates.tags = [...(contact.tags || [])];
-        if (!updates.tags.includes(extractedData.productInterest)) {
-          updates.tags.push(extractedData.productInterest);
+        if (!updates.tags.includes(extractedDataObj.productInterest)) {
+          updates.tags.push(extractedDataObj.productInterest);
         }
       }
       
@@ -708,14 +721,8 @@ const shouldProcessMessage = async (message: Message, contact: Contact, config: 
       
     case 'show_interest':
       // Use AI to detect if message shows interest
-      const analysis = await extractDataFromMessage(message.content, [{
-        id: 'interest',
-        type: 'text',
-        name: 'Interest Detection',
-        description: 'Detect if customer shows clear interest in products/services',
-        aiPrompt: 'Does this message show clear interest in products or services? Answer yes or no.'
-      }]);
-      return analysis.interest?.toLowerCase() === 'yes';
+      const analysis = await checkIfMessageShowsInterest(message.content);
+      return analysis;
       
     case 'manual':
       // For manual mode, we'll still auto-update existing entries

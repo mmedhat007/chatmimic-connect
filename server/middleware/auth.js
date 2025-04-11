@@ -2,8 +2,8 @@
  * Authentication middleware to protect routes
  */
 
-const admin = require('firebase-admin');
-const logger = require('../utils/logger');
+// Restore logger require at the top level
+const logger = require('../utils/logger'); 
 
 /**
  * Middleware to require authentication
@@ -65,9 +65,13 @@ const requireAuth = async (req, res, next) => {
   }
   
   try {
-    // Log before verification attempt
     logger.debug('Attempting to verify Firebase ID token', { path: req.path });
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    
+    // Require admin SDK and get auth instance inside the function call
+    const admin = require('firebase-admin'); 
+    const auth = admin.auth(); 
+    const decodedToken = await auth.verifyIdToken(idToken);
+    
     req.user = decodedToken;
     
     logger.debug('User authenticated successfully', {
@@ -118,7 +122,10 @@ const optionalAuth = async (req, res, next) => {
   const idToken = authHeader.split('Bearer ')[1];
   
   try {
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    // Get auth instance inside the function call
+    const admin = require('firebase-admin');
+    const auth = admin.auth();
+    const decodedToken = await auth.verifyIdToken(idToken);
     req.user = decodedToken;
     
     logger.debug('User authenticated (optional)', {

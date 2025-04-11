@@ -22,6 +22,7 @@ import {
 } from '../services/googleSheets';
 import { startWhatsAppGoogleSheetsIntegration } from '../services/whatsappGoogleIntegration';
 import { auth } from '../services/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
 
 // Constants for Google OAuth
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
@@ -75,8 +76,9 @@ const GoogleSheetsConfig: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [authStatusLoading, setAuthStatusLoading] = useState(true);
   const [isGoogleAuthorized, setIsGoogleAuthorized] = useState(false);
-  const [authLoading, setAuthLoading] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>(null);
   
   // New configuration state
   const [newConfig, setNewConfig] = useState<SheetConfig>({
@@ -91,41 +93,65 @@ const GoogleSheetsConfig: React.FC = () => {
   const [addTrigger, setAddTrigger] = useState<'first_message' | 'show_interest' | 'manual'>('first_message');
   const [autoUpdateFields, setAutoUpdateFields] = useState(true);
 
-  // Check Google Sheets connection status, auth status, and fetch configs/sheets
+  // Effect to listen for Firebase Auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log('[Auth Listener] State changed, user:', user ? user.uid : null);
+      setAuthUser(user);
+      setAuthStatusLoading(false);
+    });
+    return () => unsubscribe(); 
+  }, []);
+
+  // Effect to load Google Sheets data *after* auth state is confirmed
   useEffect(() => {
     const loadInitialData = async () => {
+      if (authStatusLoading || !authUser) {
+        console.log('[Data Load] Skipping data load: Auth loading or no user.');
+        if (!authStatusLoading && !authUser) {
+          setLoading(false);
+        }
+        return;
+      }
+      
+      console.log('[Data Load] Auth ready, proceeding with data load for user:', authUser.uid);
       setLoading(true);
-      setAuthLoading(true);
+
       try {
-        // Check general Google Auth status first (for UI buttons)
-        const isAuthorized = await getGoogleAuthStatus();
-        setIsGoogleAuthorized(isAuthorized);
+        // Fetch Google-specific auth status (needed for UI, separate from Firebase auth)
+        const isGoogleLinked = await getGoogleAuthStatus(); 
+        setIsGoogleAuthorized(isGoogleLinked);
+        
+        // Start non-dependent calls in parallel
+        const connectionTestPromise = testGoogleSheetsConnection();
+        const savedConfigsPromise = getAllSheetConfigs();
 
-        // Check connection status via backend endpoint using the new function
-        const isBackendConnected = await testGoogleSheetsConnection();
+        // Wait for parallel calls to complete (Removed authStatusPromise)
+        const [isBackendConnected, configs] = await Promise.all([
+          connectionTestPromise,
+          savedConfigsPromise
+        ]);
+
+        // Update state based on results
         setIsConnected(isBackendConnected);
-
-        // Fetch saved configurations from our backend/db regardless of connection status
-        const configs = await getAllSheetConfigs();
         setSavedConfigs(configs);
 
-        if (configs.length > 0 && !activeConfig) { // Set default active config if none selected
+        if (configs.length > 0 && !activeConfig) { 
           setActiveConfig(configs[0]);
         }
 
         // Fetch user sheets list ONLY if the backend says we are connected
-        if (isBackendConnected) {
+        if (isBackendConnected) { 
           try {
-            // This call might still fail if the token becomes invalid between backend check and this call
             const sheets = await getUserSheets(); 
             setUserSheets(sheets);
           } catch (sheetError) {
              console.error('Error fetching user sheets list:', sheetError);
              toast.error('Could not fetch list of your Google Sheets. Please try reconnecting.');
-             setUserSheets([]); // Clear sheets list on error
+             setUserSheets([]);
           }
         } else {
-           setUserSheets([]); // Clear sheets if not connected
+           setUserSheets([]);
         }
 
       } catch (error) {
@@ -137,35 +163,46 @@ const GoogleSheetsConfig: React.FC = () => {
         setSavedConfigs([]);
       } finally {
         setLoading(false);
-        setAuthLoading(false);
       }
     };
 
     loadInitialData();
-    // Dependencies: We want this to run once on mount. 
-    // Re-consider if activeConfig change should trigger reload. For now, keep empty.
-  }, []);
+  }, [authUser, authStatusLoading]);
 
-  // Start the integration when component mounts
+  // Start the integration when component mounts and conditions are met
   useEffect(() => {
     let cleanup: (() => void) | null = null;
     
     const startIntegration = async () => {
       try {
+        console.log('[Integration Startup] Attempting to start listener...');
         const unsubscribe = await startWhatsAppGoogleSheetsIntegration();
+        console.log('[Integration Startup] Listener started successfully.');
         cleanup = unsubscribe;
       } catch (error) {
         console.error('Error starting Google Sheets integration:', error);
+        toast.error('Failed to start background message listener.');
       }
     };
     
+    // Log the conditions before starting
+    console.log(`[Integration Startup Check] Conditions: isConnected=${isConnected}, hasActiveConfig=${savedConfigs.some(config => config.active)}`);
+
     if (isConnected && savedConfigs.some(config => config.active)) {
       startIntegration();
+    } else {
+      console.log('[Integration Startup Check] Conditions not met, listener not started.');
     }
     
+    // Cleanup function
     return () => {
-      if (cleanup) cleanup();
+      if (cleanup) {
+        console.log('[Integration Cleanup] Stopping listener...');
+        cleanup();
+        console.log('[Integration Cleanup] Listener stopped.');
+      }
     };
+  // Depend on isConnected and savedConfigs to restart if they change
   }, [isConnected, savedConfigs]);
 
   const handleCreateNewConfig = () => {
@@ -326,82 +363,79 @@ const GoogleSheetsConfig: React.FC = () => {
 
   // Function to handle Google authorization
   const handleGoogleAuth = async () => {
-    if (isGoogleAuthorized) {
-      setAuthLoading(true);
-      try {
-        await revokeGoogleAuth();
-        setIsGoogleAuthorized(false);
-        setIsConnected(false);
-        setUserSheets([]);
-        setSavedConfigs([]);
-        toast.success('Google Sheets disconnected');
-      } catch (error) {
-        console.error('Error revoking Google auth:', error);
-        toast.error('Failed to disconnect Google Sheets');
-      } finally {
-        setAuthLoading(false);
-      }
-    } else {
-      try {
-        await authorizeGoogleSheets();
-        // The rest happens in the callback
-      } catch (error) {
-        console.error('Error authorizing Google Sheets:', error);
-        toast.error('Failed to connect Google Sheets');
-      }
+    if (!authUser) {
+       // ... (check)
+    }
+    try {
+        if (isGoogleAuthorized) { // Logic based on isGoogleAuthorized is correct
+           await revokeGoogleAuth();
+           // ... (update state)
+        } else {
+           await authorizeGoogleSheets();
+        }
+    } catch (error) {
+      // ... (error handling)
     }
   };
 
   const handleTestIntegration = async () => {
-    try {
-      // Generate test phone number and message ID
-      const testPhoneNumber = `test-${Date.now()}`;
-      const testMessageId = `test-message-${Date.now()}`;
-      
-      // Mock the WhatsApp message in Firebase
-      const { doc, setDoc } = await import('firebase/firestore');
-      const { db, getCurrentUser } = await import('../services/firebase');
-      
-      const userUID = getCurrentUser();
-      if (!userUID) {
-        toast.error('No user logged in');
-        return;
-      }
-      
-      // Check if any sheet config is active
-      if (!savedConfigs.some(config => config.active)) {
-        toast.error('Please activate at least one sheet configuration before testing');
-        return;
-      }
-      
-      toast.loading('Processing test message...', { id: 'test-integration' });
-      
-      // Create a test message document in Firebase with comprehensive test data
-      await setDoc(
-        doc(db, `Whatsapp_Data/${userUID}/chats/${testPhoneNumber}/messages/${testMessageId}`),
-        {
-          message: 'Hello, my name is John Smith. I\'m interested in your luxury villas in Palm Jumeirah. My phone number is +971501234567. I would like to know the pricing and availability for 3-bedroom units for a move-in date of 2023-10-15. Thanks!',
-          timestamp: Date.now(),
-          sender: 'user'
-        }
-      );
-      
-      console.log(`[Test Integration] Added message doc ${testMessageId} for ${testPhoneNumber}`);
+    if (!authUser) {
+     toast.error("Please ensure you are logged in first.");
+     return;
+   }
+   if (!savedConfigs.some(config => config.active)) {
+     toast.error('Please activate at least one sheet configuration before testing');
+     return;
+   }
+   // Find the first active config to show in toast message (optional)
+   const activeConfig = savedConfigs.find(config => config.active);
+   const configName = activeConfig ? activeConfig.name : 'your sheet';
 
-      // Give feedback that the test message has been sent for processing by the background listener
-      toast('Test message sent for processing. Allow a moment for the sheet to update.', { 
-        id: 'test-integration', // Re-use ID to dismiss loading toast
-        duration: 7000, 
-        icon: 'ℹ️' // Optional: add an info icon
-      });
+   const testIntegrationToastId = 'test-integration'; // Use a consistent ID
+   toast.loading('Sending & processing test message...', { id: testIntegrationToastId });
 
-    } catch (error) {
-      console.error("Error during test integration:", error);
-      toast.error('Failed to test Google Sheets integration: ' + (error instanceof Error ? error.message : 'Unknown error'), { id: 'test-integration' });
-    }
-  };
+   try {
+     const testPhoneNumber = `test-${Date.now()}`;
+     const testMessageId = `test-message-${Date.now()}`;
+     
+     const { doc, setDoc } = await import('firebase/firestore');
+     const { db } = await import('../services/firebase');
+     const userUID = authUser.uid;
+     
+     // Create test message document with the isTestMessage flag
+     await setDoc(
+       doc(db, `Whatsapp_Data/${userUID}/chats/${testPhoneNumber}/messages/${testMessageId}`),
+       {
+         message: 'Hello, this is a test message from ChatMimic Connect. Please extract my name (Test User) and my inquiry (Checking test functionality). My number is +10000000000. Product: Test Product.',
+         timestamp: Date.now(),
+         sender: 'user',
+         isTestMessage: true // Flag to prevent listener processing
+       }
+     );
+     console.log(`[Test Integration] Added test message doc ${testMessageId} for ${testPhoneNumber}`);
 
-  if (loading) {
+     // Restore manual processing call
+     console.log(`[Test Integration] Manually calling processWhatsAppMessage for ${testPhoneNumber}/${testMessageId}`);
+     const { processWhatsAppMessage } = await import('../services/whatsappGoogleIntegration');
+     const processingResult = await processWhatsAppMessage(testPhoneNumber, testMessageId);
+
+     // Restore success/error feedback based on result
+     if (processingResult) {
+       toast.success(`Test message processed successfully! Check sheet "${configName}".`, { id: testIntegrationToastId, duration: 6000 });
+       console.log(`[Test Integration] Manual processing successful for ${testPhoneNumber}/${testMessageId}`);
+     } else {
+       // Provide more specific feedback if possible, otherwise generic failure
+       toast.error("Test message processing failed. Check console for details.", { id: testIntegrationToastId, duration: 5000 });
+       console.error(`[Test Integration] Manual processing failed for ${testPhoneNumber}/${testMessageId}`);
+     }
+
+   } catch (error) {
+     console.error("Error during test integration:", error);
+     toast.error(`Failed to test integration: ${error instanceof Error ? error.message : 'Unknown error'}`, { id: testIntegrationToastId });
+   }
+ };
+
+  if (authStatusLoading || loading) {
     return (
       <div className="flex items-center justify-center p-6">
         <RefreshCw className="w-6 h-6 animate-spin text-gray-500" />
@@ -417,10 +451,10 @@ const GoogleSheetsConfig: React.FC = () => {
         <Button
           variant={isGoogleAuthorized ? "outline" : "default"}
           onClick={handleGoogleAuth}
-          disabled={authLoading}
+          disabled={authStatusLoading}
           className={isGoogleAuthorized ? "border-green-500 text-green-700 hover:bg-green-50" : ""}
         >
-          {authLoading ? (
+          {authStatusLoading ? (
             <span className="animate-pulse">Loading...</span>
           ) : isGoogleAuthorized ? (
             <>

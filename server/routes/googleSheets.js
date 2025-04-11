@@ -530,6 +530,7 @@ router.post('/spreadsheets/:sheetId/values:append', requireAuth, async (req, res
     logger.info(`Appending row to sheet ${sheetId} for user ${uid}`);
 
     // 1. Get Sheet Configuration from Firestore to determine column order
+    let columnMap = {}; // To map column ID to column Name
     let columnOrder = []; // Initialize as empty array
     try {
       const userDoc = await admin.firestore().collection('Users').doc(uid).get();
@@ -537,7 +538,13 @@ router.post('/spreadsheets/:sheetId/values:append', requireAuth, async (req, res
         const sheetConfigs = userDoc.data()?.workflows?.whatsapp_agent?.sheetConfigs || [];
         const config = sheetConfigs.find((c) => c.sheetId === sheetId);
         if (config && Array.isArray(config.columns)) {
-          columnOrder = config.columns.map((col) => col.id); // Get the IDs in order
+          // Create a map of { columnId: columnName }
+          columnMap = config.columns.reduce((map, col) => {
+            map[col.id] = col.name;
+            return map;
+          }, {});
+          // Also get the order of column NAMES
+          columnOrder = config.columns.map((col) => col.name);
         }
       }
     } catch (fsError) {
@@ -553,8 +560,12 @@ router.post('/spreadsheets/:sheetId/values:append', requireAuth, async (req, res
     // 2. Get Authenticated Sheets Client
     const sheets = await googleService.getAuthenticatedSheetsClient(uid);
 
-    // 3. Prepare Row Data in Correct Order
-    const rowValues = columnOrder.map(columnId => data[columnId] || ''); // Map data to ordered array
+    // 3. Prepare Row Data in Correct Order using Column Names
+    // The incoming 'data' object from the frontend uses Column Names as keys.
+    logger.debug('Received data for append:', data);
+    logger.debug('Expected column order (by name):', columnOrder);
+    const rowValues = columnOrder.map(columnName => data[columnName] !== undefined ? String(data[columnName]) : ''); // Map data using names, ensure string
+    logger.debug('Prepared row values for API:', rowValues);
 
     // 4. Append Row to Sheet
     // Assume appending to the first sheet (Sheet1) - might need enhancement later

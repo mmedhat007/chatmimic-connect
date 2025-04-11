@@ -9,7 +9,7 @@ export interface SheetColumn {
   id: string;
   name: string;
   description: string;
-  type: 'text' | 'date' | 'name' | 'product' | 'inquiry' | 'phone';
+  type: 'text' | 'date' | 'name' | 'product' | 'inquiry' | 'phone' | 'timestamp';
   aiPrompt: string;
   isAutoPopulated?: boolean;
 }

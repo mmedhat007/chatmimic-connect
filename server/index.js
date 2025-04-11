@@ -75,6 +75,10 @@ console.log('[DEBUG] index.js: Attempting to require googleSheetsRoutes...');
 const googleSheetsRoutes = require('./routes/googleSheets');
 console.log('[DEBUG] index.js: googleSheetsRoutes required successfully.');
 
+console.log('[DEBUG] index.js: Attempting to require aiRoutes...');
+const aiRoutes = require('./routes/aiRoutes');
+console.log('[DEBUG] index.js: aiRoutes required successfully.');
+
 console.log('[DEBUG] index.js: Attempting to require logger...');
 const logger = require('./utils/logger');
 console.log('[DEBUG] index.js: logger required successfully.');
@@ -364,9 +368,12 @@ app.use('/proxy', proxyRoutes);
 app.use('/api/config', configRoutes);
 app.use('/config', configRoutes);
 
-// Google Sheets routes
+// Google Sheets routes (Restored)
 app.use('/api/google-sheets', googleSheetsRoutes);
 app.use('/google-sheets', googleSheetsRoutes);
+
+// AI routes
+app.use('/api/ai', aiRoutes);
 
 // Explicitly define a 404 handler for API routes to give better errors
 app.use('/api/*', (req, res) => {
