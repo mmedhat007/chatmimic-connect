@@ -374,8 +374,10 @@ export const testGoogleSheetsConnection = async (): Promise<boolean> => {
     const response = await apiRequest('/api/google-sheets/test-connection');
 
     if (response && response.status === 'success') {
-      console.log('[testGoogleSheetsConnection] Backend connection test successful:', response.message);
-      return true;
+      // Log the actual connection status from the response data
+      const isConnected = response.data?.connected === true;
+      console.log(`[testGoogleSheetsConnection] Backend response received. Connection status: ${isConnected}`);
+      return isConnected;
     } else {
       console.error('[testGoogleSheetsConnection] Backend connection test failed:', response?.message || 'Unknown error');
       return false;

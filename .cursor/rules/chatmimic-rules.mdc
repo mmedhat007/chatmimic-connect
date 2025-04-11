@@ -73,10 +73,15 @@ This file serves as Cursor's learning journal, capturing key insights and projec
 
 ## Project-Specific Patterns
 
+// ... Known Issues ...
+
+## Project-Specific Patterns
+
 - API request proxying for external services
 - Bearer token standardization for authorization headers
 - Consistent error handling and logging patterns
-- Google API credential management
+- Google API credential management (encryption, refresh handled in backend `googleService.js`).
+- **Google Sheets Automation**: Core automation logic (listening for new messages, extracting data, updating sheets) resides in the persistent backend service `messageProcessorService.js`, triggered by Firestore `onSnapshot` listeners.
 - **Behavior Rules Save Separation**: Behavior Rules tab has its own save mechanism (`AgentBehaviorRules.tsx` -> `updateBehaviorRules` service) to prevent unnecessary embedding updates. Main config save excludes `behavior_rules`.
 - **Regular Documentation Updates**: Regularly update project documentation (`project_documentation/` folder, `API_ENDPOINTS.md`, etc.) to reflect significant changes, fixes, and learned patterns.
 - **Server Startup Debugging Process**: When encountering server startup crashes (esp. systemd restart loops):
@@ -84,8 +89,6 @@ This file serves as Cursor's learning journal, capturing key insights and projec
     2. If logs are unhelpful, attempt manual execution (`node index.js`) as the service user with exported env vars.
     3. If still unclear, add granular `console.log` statements around `require` calls and initialization code, starting from `index.js` and moving into required modules until the crashing line is found.
     4. Common culprits: Missing dependencies (`npm install --save <pkg>`), incorrect file paths (`path.resolve`), env var loading order (`dotenv` at top), module initialization errors.
-
-
 
 
 

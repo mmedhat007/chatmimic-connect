@@ -139,6 +139,19 @@ try {
   process.exit(1);
 }
 
+// Start Background Message Processor (after Firebase init)
+console.log('[INFO] Initializing background message processor...');
+try {
+    const messageProcessor = require('./services/messageProcessorService');
+    messageProcessor.startListening();
+    logger.info('Background message processor started successfully.');
+} catch (error) {
+    console.error('[CRITICAL] Failed to start background message processor:', error);
+    logger.error('CRITICAL: Failed to start background message processor.', { error: error.message, stack: error.stack });
+    // Optional: Decide if server should exit if listener fails to start.
+    // if (isProduction) process.exit(1);
+}
+
 const app = express();
 // >>> NEW: Trust the first proxy hop (e.g., Nginx) - Moved earlier
 app.set('trust proxy', 1);
@@ -422,13 +435,27 @@ app.use((err, req, res, next) => {
 
 // Start the server
 app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
-  console.log(`Server running on port ${PORT}`);
+  console.log(`[INFO] Server is running on port ${PORT}`);
+  logger.info(`Server started on port ${PORT}. CORS origins: ${corsOrigins.join(', ')}`);
 });
 
-// Global error handler
-process.on('unhandledRejection', (error) => {
-  logger.error('Unhandled promise rejection:', error);
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM signal received: closing HTTP server');
+  const messageProcessor = require('./services/messageProcessorService'); // Re-require for shutdown
+  messageProcessor.stopListening();
+  // Add server close logic here if needed
+  logger.info('HTTP server closed');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT signal received: closing HTTP server');
+  const messageProcessor = require('./services/messageProcessorService'); // Re-require for shutdown
+  messageProcessor.stopListening();
+  // Add server close logic here if needed
+  logger.info('HTTP server closed');
+  process.exit(0);
 });
 
 module.exports = app; 

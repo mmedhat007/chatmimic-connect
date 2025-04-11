@@ -310,11 +310,168 @@ const getAuthenticatedSheetsClient = async (userId) => {
   }
 };
 
+/**
+ * Finds the row index of a contact in a Google Sheet based on phone number.
+ * @param {string} uid - Firebase user ID.
+ * @param {object} config - The sheet configuration object from Firestore.
+ * @param {string} phoneNumber - The phone number to search for.
+ * @returns {Promise<number|null>} The 1-based row index if found, otherwise null.
+ */
+const findContactRow = async (uid, config, phoneNumber) => {
+    if (!config || !config.sheetId || !config.columns || !phoneNumber) {
+        logger.warn(`Invalid arguments for findContactRow for user ${uid}`);
+        return null;
+    }
+
+    // Find the column configuration for the phone number
+    // Assume a standard name like 'Phone Number' or check config for a specific type/id
+    const phoneColumnConfig = config.columns.find(col => col.name === 'Phone Number' || col.type === 'phone'); // Adjust logic as needed
+    if (!phoneColumnConfig) {
+        logger.warn(`No 'Phone Number' column configured in sheet ${config.sheetId} for user ${uid}. Cannot search.`);
+        return null; // Cannot find if we don't know which column to search
+    }
+
+    // Determine the column letter (simple A, B, C... for now)
+    // This is a simplification. A robust solution maps column names to letters or uses A1 notation ranges.
+    const phoneColumnIndex = config.columns.findIndex(col => col.id === phoneColumnConfig.id);
+    if (phoneColumnIndex === -1) {
+         logger.warn(`Phone column config found but index mismatch in sheet ${config.sheetId} for user ${uid}.`);
+         return null;
+    }
+    const phoneColumnLetter = String.fromCharCode(65 + phoneColumnIndex); // A=0, B=1, etc.
+
+    try {
+        const sheets = await getAuthenticatedSheetsClient(uid);
+        const range = `Sheet1!${phoneColumnLetter}:${phoneColumnLetter}`; // Search entire column
+        logger.debug(`Searching for ${phoneNumber} in range ${range} of sheet ${config.sheetId} for user ${uid}`);
+
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: config.sheetId,
+            range: range,
+        });
+
+        const values = response.data.values;
+        if (values) {
+            // Find the index (add 1 because Sheets rows are 1-based)
+            const rowIndex = values.findIndex(row => row[0] === phoneNumber);
+            if (rowIndex !== -1) {
+                logger.debug(`Found ${phoneNumber} at row ${rowIndex + 1} in sheet ${config.sheetId}`);
+                return rowIndex + 1;
+            }
+        }
+        logger.debug(`${phoneNumber} not found in sheet ${config.sheetId}`);
+        return null;
+    } catch (error) {
+        logger.error(`Error finding contact ${phoneNumber} in sheet ${config.sheetId} for user ${uid}:`, error.response?.data || error.message);
+        // Consider specific error handling, e.g., 404 for sheet not found, 403 for permissions
+        if (error.code === 403 || error.message.includes('permission')) {
+             throw new Error(`Permission denied accessing sheet ${config.sheetId}. Please check Google permissions.`);
+        } else if (error.code === 404 || error.message.includes('Requested entity was not found')) {
+             throw new Error(`Sheet ${config.sheetId} not found or inaccessible.`);
+        }
+        throw new Error(`Failed to search sheet ${config.sheetId}: ${error.message}`);
+    }
+};
+
+/**
+ * Appends a row of data to a Google Sheet.
+ * @param {string} uid - Firebase user ID.
+ * @param {object} config - The sheet configuration object from Firestore.
+ * @param {object} rowDataMap - An object mapping column names to values.
+ * @returns {Promise<void>}
+ */
+const appendSheetRow = async (uid, config, rowDataMap) => {
+    if (!config || !config.sheetId || !config.columns || !rowDataMap) {
+        throw new Error(`Invalid arguments for appendSheetRow for user ${uid}`);
+    }
+
+    try {
+        const sheets = await getAuthenticatedSheetsClient(uid);
+
+        // Ensure row data is in the correct order based on config.columns
+        const rowValues = config.columns.map(col => rowDataMap[col.name] !== undefined ? rowDataMap[col.name] : ''); // Use name as key
+
+        const range = 'Sheet1!A1'; // Append to the first sheet, starting at A1 tells Sheets to find the end
+        logger.info(`Appending row to sheet ${config.sheetId} for user ${uid}. Range: ${range}`);
+        logger.debug(`Row values being appended: ${JSON.stringify(rowValues)}`);
+
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: config.sheetId,
+            range: range,
+            valueInputOption: 'USER_ENTERED', // Interpret values as if typed by user
+            insertDataOption: 'INSERT_ROWS', // Insert new rows for the data
+            requestBody: {
+                values: [rowValues], // API expects an array of rows
+            },
+        });
+        logger.info(`Successfully appended row to sheet ${config.sheetId} for user ${uid}`);
+    } catch (error) {
+        logger.error(`Error appending row to sheet ${config.sheetId} for user ${uid}:`, error.response?.data || error.message);
+         if (error.code === 403 || error.message.includes('permission')) {
+             throw new Error(`Permission denied writing to sheet ${config.sheetId}. Please check Google permissions.`);
+        } else if (error.code === 404 || error.message.includes('Requested entity was not found')) {
+             throw new Error(`Sheet ${config.sheetId} not found or inaccessible for append.`);
+        }
+        throw new Error(`Failed to append to sheet ${config.sheetId}: ${error.message}`);
+    }
+};
+
+/**
+ * Updates a specific row in a Google Sheet.
+ * @param {string} uid - Firebase user ID.
+ * @param {object} config - The sheet configuration object from Firestore.
+ * @param {number} rowIndex - The 1-based index of the row to update.
+ * @param {object} rowDataMap - An object mapping column names to values for update.
+ * @returns {Promise<void>}
+ */
+const updateSheetRow = async (uid, config, rowIndex, rowDataMap) => {
+     if (!config || !config.sheetId || !config.columns || !rowDataMap || !rowIndex || rowIndex < 1) {
+        throw new Error(`Invalid arguments for updateSheetRow for user ${uid}`);
+    }
+
+    try {
+        const sheets = await getAuthenticatedSheetsClient(uid);
+
+        // Ensure row data is in the correct order based on config.columns
+        const rowValues = config.columns.map(col => rowDataMap[col.name] !== undefined ? rowDataMap[col.name] : ''); // Use name as key
+
+        // Determine the range to update, e.g., 'Sheet1!A5:C5'
+        const startColumnLetter = 'A';
+        const endColumnLetter = String.fromCharCode(65 + config.columns.length - 1);
+        const range = `Sheet1!${startColumnLetter}${rowIndex}:${endColumnLetter}${rowIndex}`;
+
+        logger.info(`Updating row ${rowIndex} in sheet ${config.sheetId} for user ${uid}. Range: ${range}`);
+        logger.debug(`Row values for update: ${JSON.stringify(rowValues)}`);
+
+
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: config.sheetId,
+            range: range,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                values: [rowValues],
+            },
+        });
+         logger.info(`Successfully updated row ${rowIndex} in sheet ${config.sheetId} for user ${uid}`);
+    } catch (error) {
+        logger.error(`Error updating row ${rowIndex} in sheet ${config.sheetId} for user ${uid}:`, error.response?.data || error.message);
+         if (error.code === 403 || error.message.includes('permission')) {
+             throw new Error(`Permission denied updating sheet ${config.sheetId}. Please check Google permissions.`);
+        } else if (error.code === 404 || error.message.includes('Requested entity was not found')) {
+             throw new Error(`Sheet ${config.sheetId} not found or inaccessible for update.`);
+        }
+        throw new Error(`Failed to update row ${rowIndex} in sheet ${config.sheetId}: ${error.message}`);
+    }
+};
+
 module.exports = {
   getCredentialsForUser,
   getValidCredentials,
   updateCredentialsInDb,
   exchangeCodeForTokens,
   createOAuth2ClientWithCredentials,
-  getAuthenticatedSheetsClient
+  getAuthenticatedSheetsClient,
+  findContactRow,
+  appendSheetRow,
+  updateSheetRow
 }; 

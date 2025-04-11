@@ -1,12 +1,12 @@
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './firebase';
 import { getGoogleAuthStatus } from './googleSheets';
-import { startWhatsAppGoogleSheetsIntegration } from './whatsappGoogleIntegration';
 import { startLifecycleTaggingIntegration } from './lifecycleTagging';
 
 /**
- * Initializes the WhatsApp integrations when a user is authenticated
- * This is called when the app starts to ensure integrations are running for logged-in users
+ * Initializes background services (like lifecycle tagging) when a user is authenticated.
+ * This is called when the app starts.
+ * NOTE: Google Sheets integration now runs on the backend and does not need frontend initialization here.
  */
 export const initializeServices = () => {
   // Set up auth state change listener
@@ -14,25 +14,26 @@ export const initializeServices = () => {
     if (user) {
       try {
         // Start the Lifecycle Tagging integration
-        console.log('Starting Lifecycle Tagging integration for authenticated user');
+        console.log('[Initializer] Starting Lifecycle Tagging integration for authenticated user');
         startLifecycleTaggingIntegration().catch(error => {
-          console.error('Error starting Lifecycle Tagging integration:', error);
+          console.error('[Initializer] Error starting Lifecycle Tagging integration:', error);
         });
         
-        // Check if the user has authorized Google Sheets
-        const isAuthorized = await getGoogleAuthStatus();
-        
-        if (isAuthorized) {
-          console.log('Starting WhatsApp Google Sheets integration for authenticated user');
-          
-          // Start the WhatsApp Google Sheets integration
-          startWhatsAppGoogleSheetsIntegration().catch(error => {
-            console.error('Error starting Google Sheets integration:', error);
-          });
-        }
+        // REMOVED: Google Sheets integration check and startup - Handled by backend listener
+        // const isAuthorized = await getGoogleAuthStatus();
+        // if (isAuthorized) {
+        //   console.log('[Initializer] Starting WhatsApp Google Sheets integration for authenticated user');
+        //   startWhatsAppGoogleSheetsIntegration().catch(error => {
+        //     console.error('[Initializer] Error starting Google Sheets integration:', error);
+        //   });
+        // }
+
       } catch (error) {
-        console.error('Error initializing services:', error);
+        console.error('[Initializer] Error initializing services:', error);
       }
+    } else {
+        console.log('[Initializer] User logged out, services depending on auth state should stop if necessary.');
+        // Add cleanup logic for other services if needed on logout
     }
   });
 };

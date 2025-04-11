@@ -2,7 +2,8 @@
 
 ## Recent Changes (April 2025)
 
-- **Google Sheets Integration Refactor**: Moved Google Sheets API calls (listing sheets, token refresh) to the backend (`/api/google-sheets/*` endpoints) for improved security and credential management. Frontend now calls these backend endpoints.
+- **Google Sheets Automation Refactor**: Moved core Google Sheets automation logic (message listening, AI extraction, sheet writing) to a persistent backend service (`messageProcessorService.js`) for reliable, unattended operation. Frontend now handles only configuration and manual testing.
+- **Google Sheets API Calls**: Refactored Google Sheets API calls (listing sheets, token refresh) to dedicated backend endpoints (`/api/google-sheets/*`) called by the frontend for improved security and credential management.
 - **Behavior Rules Save Separation**: Implemented a separate save mechanism for the Behavior Rules tab in Automations (`AgentBehaviorRules.tsx`) to avoid unnecessary full config saves and embedding updates. The main config save (`AutomationsPage.tsx`) now excludes `behavior_rules`.
 - **Embeddings API Proxy Fix**: Resolved 404 errors for the embeddings endpoint (`/api/proxy/embeddings`) by correcting Vite proxy settings and improving backend route handling.
 - **Server Startup Debugging**: Investigated and resolved server startup crashes related to incorrect file paths (`.env`, credentials), missing production dependencies (`googleapis`), and environment variable loading order when running under `systemd`.

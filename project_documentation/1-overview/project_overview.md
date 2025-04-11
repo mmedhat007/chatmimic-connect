@@ -42,11 +42,11 @@ ChatMimic Connect is a WhatsApp AI agent management platform that allows busines
 
 ### Google Sheets Integration
 - OAuth-based authentication with Google
-- Automatic data extraction from WhatsApp messages using AI
 - Custom column mapping with predefined and custom fields
-- Real-time synchronization with new WhatsApp messages
-- Token refresh mechanism for persistent access
-- Test functionality to verify integration
+- **Persistent Backend Processing:** A backend service continuously listens for new WhatsApp messages and updates sheets automatically, regardless of frontend activity.
+- **AI Data Extraction (Backend):** The backend service handles data extraction from messages using AI (Groq).
+- Token refresh mechanism for persistent access (handled by backend service)
+- Test functionality to verify integration (manual trigger via UI)
 - Multiple configuration support for different data collection needs
 
 ---
@@ -58,18 +58,23 @@ ChatMimic Connect is a WhatsApp AI agent management platform that allows busines
 - [x] Agent setup flow
 - [x] WhatsApp setup flow
 - [x] Chat dashboard with lifecycle sidebar
-- [x] Automations page
+- [x] Automations page (Configuration UI)
 - [x] Settings page
-- [x] Google Sheets integration page with custom icons
+- [x] Google Sheets integration page (Configuration UI, OAuth trigger, Test button)
+- [x] Custom icons and UI components
 
 ### Backend
-- [x] Firebase for authentication and real-time data
+- [x] Firebase for authentication and real-time message data
 - [x] Supabase for agent configuration and vector search
-- [x] OpenAI API integration for embeddings and completions
+- [x] OpenAI API integration for embeddings
+- [x] Groq API integration for data extraction (via backend `aiService`)
 - [x] WhatsApp Business API for messaging
+- [x] **Persistent Message Listener Service (`messageProcessorService.js`):** Handles Firestore listeners, triggers AI extraction, and Google Sheets updates.
+- [x] **Google Service (`googleService.js`):** Handles authenticated interactions with Google APIs (Sheets, Drive) using stored user credentials.
+- [x] **AI Service (`aiService.js`):** Handles interaction with Groq API for data extraction.
 
 ### Database
-- [x] Firebase Firestore collections for users and messages
+- [x] Firebase Firestore collections for users and messages (includes `isProcessedByAutomation` flag)
 - [x] Supabase PostgreSQL for configuration and embeddings
 - [x] Vector similarity search using pgvector
 
@@ -203,13 +208,15 @@ How leads are tracked and managed:
 - Using WhatsApp Business API for messaging
 - Creating webhook endpoint for receiving messages
 - Managing templates through WhatsApp API
-- Storing credentials securely in Firebase
+- Storing credentials securely (Google OAuth tokens encrypted in Firestore)
 
-### AI Configuration
-- Storing configuration as JSON objects in Supabase
-- Using OpenAI API for embeddings and completions
+### AI Configuration & Processing
+- Storing agent configuration as JSON objects in Supabase
+- Using OpenAI API for embeddings (via backend)
+- Using Groq API for data extraction (via backend `aiService`)
+- Backend listener (`messageProcessorService.js`) handles processing pipeline
 - Performing vector similarity search for context retrieval
-- Using localStorage to cache configuration for faster access and avoid repeated setups
+- **Behavior Rules Save Separation:** Behavior Rules have their own save mechanism (`AgentBehaviorRules.tsx` -> `updateBehaviorRules` service) separate from main config save and embedding updates.
 
 ### Lead Management
 - Implementing lifecycle stages for lead categorization

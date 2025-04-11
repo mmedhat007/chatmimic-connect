@@ -1,98 +1,85 @@
+# Google Sheets Integration - Technical Details (Updated for Backend Automation)
 
-Okay, let's dive into a detailed technical opinion on how the Google Sheets integration *should* be implemented within your project's architecture (React/Vite frontend, Node/Express backend, Firebase Auth/Firestore, Supabase, Groq). This assumes we want a robust, scalable, and maintainable solution, addressing the kind of issues we've seen (like the `fields.map` error).
+This document outlines the technical implementation of the Google Sheets integration, focusing on the backend-driven automation process.
 
-**Core Principle:** Separate concerns clearly. Frontend handles user interaction and config presentation. Backend handles auth, business logic, secure credential management, and interactions with external APIs (Google, Groq).
+**Core Principle:** Separate concerns clearly. Frontend handles user interaction (OAuth initiation, config UI). Backend handles persistent listening, secure credential management, business logic, and interactions with external APIs (Google, Groq).
 
-**I. Frontend Implementation (React/Vite - e.g., `GoogleSheetsPage.tsx`, `GoogleSheetsConfig.tsx`)**
+**I. Frontend Implementation (React/Vite - e.g., `GoogleSheetsConfig.tsx`)**
 
-1.  **Connection Status Check:**
-    *   On page load (`GoogleSheetsPage`), make an authenticated `GET` request to a backend endpoint like `/api/google-sheets/status`.
-    *   **Backend (`/api/google-sheets/status`):** Verifies the Firebase auth token (middleware). Checks Firestore (`users/{uid}/credentials/googleSheetsOAuth`) for the presence and validity (check expiry, though refresh token makes this less critical) of Google OAuth tokens. Returns `{ isConnected: true/false }`.
-    *   **Frontend:** Updates UI state to show "Connected" or "Disconnected" status, potentially displaying the connected Google account email if available.
-
-2.  **Initiating Connection (OAuth Flow):**
-    *   If disconnected, a "Connect Google Account" button is shown.
-    *   **Frontend (onClick):** Makes an authenticated `GET` request to `/api/google-sheets/auth-url`.
-    *   **Backend (`/api/google-sheets/auth-url`):** Verifies Firebase auth. Uses the `googleapis` library and configured Google Client ID/Secret (`server/.env`) to generate the Google OAuth consent screen URL with required scopes (e.g., `https://www.googleapis.com/auth/spreadsheets`). Returns `{ authUrl: '...' }`.
-    *   **Frontend:** Receives the `authUrl` and redirects the user's browser (`window.location.href = authUrl;`).
-
-3.  **Handling Google Callback:**
-    *   **Google Redirects:** After user consent, Google redirects back to the `GOOGLE_REDIRECT_URI` specified in your Google Cloud Console and `server/.env` (e.g., `http://localhost:3000/google-callback` or a production equivalent). This redirect includes an authorization `code` and the `state` parameter (if used).
-    *   **Backend (`/google-callback` Route):**
-        *   This specific route *doesn't* need initial Firebase auth, as the user isn't logged into *our app* at this exact redirect moment. It validates the `state` parameter for security (CSRF prevention).
-        *   Exchanges the received `code` for `accessToken`, `refreshToken`, and `expiresAt` using the `googleapis` library and Google Client ID/Secret.
-        *   **Crucially:** It needs to associate these tokens with the correct Firebase user. This is often done using the `state` parameter passed in step 2, which should contain an encoded, temporary identifier linking back to the user's session or UID. Alternatively, if the user is guaranteed to be logged in *before* clicking connect, their UID could be stored server-side temporarily.
-        *   Securely stores the `accessToken`, `refreshToken`, and `expiresAt` in Firestore under `users/{uid}/credentials/googleSheetsOAuth`. Encrypting the refresh token before storage is a good practice, using the `TOKEN_ENCRYPTION_KEY` from `server/.env`.
-        *   Redirects the user back to the frontend Google Sheets configuration page (e.g., `/google-sheets-settings`).
-
-4.  **Configuration UI (`GoogleSheetsConfig.tsx`):**
-    *   **Fetch Existing Config:** On load (and after successful connection), make an authenticated `GET` request to `/api/config` (or a more specific `/api/google-sheets/config`).
-    *   **Backend (`/api/config` or `/api/google-sheets/config`):** Verify auth. Fetch the `sheetConfigs` array from `users/{uid}/workflows/whatsapp_agent/sheetConfigs` in Firestore. Return it.
-    *   **Frontend:**
-        *   Uses state (`useState` or similar) to manage the fetched/edited configuration (`sheetId`, `active`, `columns` array).
-        *   Provides UI elements:
-            *   Input/Selector for the target Google Sheet ID/Name (Potentially use Google Picker API for a better UX, but requires extra setup).
-            *   A dynamic list/table to manage the `columns` array.
-                *   Each row allows editing `id`, `name`, `description`, `type` (dropdown), `aiPrompt` (textarea).
-                *   Buttons to Add/Remove columns.
-        *   "Save Configuration" button.
-
-5.  **Saving Configuration:**
-    *   **Frontend (onClick):** Bundles the current configuration state (the `sheetConfigs` array, likely containing just one config object initially) into a JSON payload. Makes an authenticated `POST` or `PUT` request to `/api/config` (or `/api/google-sheets/config`) with the payload.
-    *   **Backend (`/api/config` or `/api/google-sheets/config`):** Verify auth. Validate the incoming payload structure. Update the `sheetConfigs` field in the user's Firestore document (`users/{uid}/workflows/whatsapp_agent/`). Return success/failure status.
-
-6.  **Disconnecting:**
-    *   **Frontend (onClick):** Shows a confirmation modal. If confirmed, makes an authenticated `POST` request to `/api/google-sheets/disconnect`.
-    *   **Backend (`/api/google-sheets/disconnect`):** Verify auth. Remove the `googleSheetsOAuth` credentials from the user's Firestore document (or revoke the token via Google API if necessary). Return success/failure.
-    *   **Frontend:** Updates UI state back to "Disconnected".
+*   **Responsibilities:**
+    *   Displaying connection status (via `/api/google-sheets/status`).
+    *   Initiating Google OAuth flow (via `/api/google-sheets/auth-url`).
+    *   Handling UI for Google Sheets configuration (listing sheets via `/api/google-sheets/list`, displaying/editing `sheetId`, columns, active status).
+    *   Saving configuration changes (via `/api/config` or `/api/google-sheets/config`).
+    *   Disconnecting Google Account (via `/api/google-sheets/disconnect`).
+    *   Providing a "Test Integration" button which:
+        *   Creates a test message document in Firestore (`isTestMessage: true`).
+        *   Calls `processWhatsAppMessage` (`whatsappGoogleIntegration.ts`) which simulates the flow using backend API calls (`/api/ai/extract-data`, `/api/google-sheets/...`).
+*   **Does NOT:**
+    *   Start or manage any persistent listeners.
+    *   Contain logic for automatic message processing or sheet updates.
 
 **II. Backend Implementation (Node/Express)**
 
-1.  **Routes (`googleSheetsRoutes.js`, `configRoutes.js`, `proxyRoutes.js`):** Define the endpoints mentioned above (`/status`, `/auth-url`, `/google-callback`, `/disconnect`, `/config`, `/proxy/extract-data`). Apply `authMiddleware` (using Firebase Admin SDK `verifyIdToken`) to all except `/google-callback`. Use body-parsing middleware (`express.json()`).
+1.  **Routes for Frontend Support (`googleSheetsRoutes.js`, `googleOAuthRoutes.js`, `configRoutes.js`):**
+    *   Provide authenticated endpoints for the frontend UI actions listed above (status check, auth URL generation, OAuth callback handling, listing sheets, saving config, disconnecting).
+    *   These routes operate within the context of the authenticated user making the request (`req.user.uid`).
 
-2.  **Google OAuth Service (`googleOAuth.js`):**
-    *   Contains helper functions to interact with the `googleapis` library.
-    *   `getGoogleAuthClient(userId)`: Fetches tokens for a user from Firestore, creates an authenticated OAuth2 client instance. Handles token refresh automatically using the stored refresh token if the access token is expired. This client is then used for API calls.
-    *   Functions to generate auth URL, exchange code for tokens.
+2.  **Google Service (`services/googleService.js`):**
+    *   **Core Functions:**
+        *   `getCredentialsForUser(uid)`: Fetches encrypted tokens from Firestore and decrypts them.
+        *   `getValidCredentials(uid)`: Gets credentials and handles refresh token logic if access token is expired, updating Firestore.
+        *   `updateCredentialsInDb(uid, ...)`: Updates stored tokens (used during refresh).
+        *   `exchangeCodeForTokens(code, ...)`: Handles OAuth callback code exchange.
+        *   `createOAuth2ClientWithCredentials(credentials)`: Creates an OAuth client instance.
+        *   `getAuthenticatedSheetsClient(uid)`: Gets valid credentials and returns an authenticated `google.sheets` client instance (**Used by sheet manipulation functions**).
+    *   **Sheet Manipulation Functions (NEW/MODIFIED):**
+        *   `findContactRow(uid, config, phoneNumber)`: Finds row index based on phone number in the configured column.
+        *   `appendSheetRow(uid, config, rowDataMap)`: Appends a new row with data mapped according to `config.columns`.
+        *   `updateSheetRow(uid, config, rowIndex, rowDataMap)`: Updates an existing row.
+        *   **Crucially**, these manipulation functions all accept `uid` and the specific sheet `config`, and internally use `getAuthenticatedSheetsClient(uid)` to perform actions on behalf of the user *without* needing an HTTP request context.
 
-3.  **Firestore Service (e.g., `services/firestoreService.js`):**
-    *   Abstracts Firestore interactions (getting/setting user credentials, getting/setting sheet configs).
+3.  **AI Service (`services/aiService.js`):**
+    *   `extractDataFromMessage(messageText, columnsConfig)`:
+        *   Accepts message text and the `columns` array from the user's sheet configuration.
+        *   Constructs a prompt for Groq based on the `columnsConfig` (using `aiPrompt` from each column).
+        *   Calls Groq API, parses the response, and returns structured data (mapping column `id` to extracted value).
+        *   Operates independently of request context.
 
-4.  **AI Service (`services/aiService.js`):**
-    *   `extractDataWithGroq(messageText, fieldsConfig)`:
-        *   **Input:** Receives the raw message text and the *exact* `columns` array (which we're calling `fieldsConfig` here) as fetched from Firestore. **Crucially, this service should *not* be responsible for fetching the config itself.**
-        *   **Logic:** Constructs the prompt for Groq. This likely involves combining the `messageText` with instructions based on the `fieldsConfig` array. It should iterate through the `fieldsConfig` array (`fieldsConfig.map(...)` or `forEach`) to build the part of the prompt telling Groq *what* to extract based on each field's `name`, `type`, and `aiPrompt`.
-        *   Calls the Groq API using the `GROQ_API_KEY`.
-        *   Parses the JSON response from Groq, attempting to structure it according to the requested fields.
-        *   Returns the structured extracted data (e.g., `{ "name": "John", "email": "john@example.com", ... }`) or throws an error.
-
-5.  **Core Extraction & Writing Workflow (Triggered by New Message):**
-    *   **(Assumption):** Some service/function listens for or receives new WhatsApp messages associated with a user.
-    *   **Step 1: Get Config:** Fetch the user's *active* Google Sheets configuration from Firestore (`users/{uid}/workflows/whatsapp_agent/sheetConfigs`). If no active config, stop. Let's say this returns `activeConfig = { sheetId: '...', columns: [...] }`.
-    *   **Step 2: Call AI Extraction:** Call `aiService.extractDataWithGroq(message.text, activeConfig.columns)`.
-    *   **Step 3: Handle AI Response:** If successful, receive `extractedData`. If fails, log the error and stop.
-    *   **Step 4: Prepare Sheet Data:** Format `extractedData` into the array format required by the Google Sheets API `append` method (usually an array of values corresponding to the column order). Determine the correct column order based on `activeConfig.columns`.
-    *   **Step 5: Write to Sheet:**
-        *   Get an authenticated Google Sheets API client: `const sheets = google.sheets({ version: 'v4', auth: await googleOAuthService.getGoogleAuthClient(userId) });`
-        *   Call the Sheets API:
-            ```javascript
-            await sheets.spreadsheets.values.append({
-              spreadsheetId: activeConfig.sheetId,
-              range: 'Sheet1!A1', // Or determine the sheet name dynamically
-              valueInputOption: 'USER_ENTERED',
-              requestBody: {
-                values: [formattedRowDataArray], // e.g., [ ['John', 'john@example.com'] ]
-              },
-            });
-            ```
-    *   **Step 6: Log:** Log success or failure of the Sheets write operation.
+4.  **Message Processor Service (`services/messageProcessorService.js`): (NEW - Core Automation Engine)**
+    *   **Initialization:** The `startListening()` function is called once from `server/index.js` after Firebase Admin is initialized.
+    *   **Listener:**
+        *   Uses `admin.firestore().collectionGroup('messages').where('isProcessedByAutomation', '==', false).orderBy('createdAt', 'asc').onSnapshot(...)`.
+        *   Listens across all users for new messages that haven't been processed by automation.
+    *   **Snapshot Handling (`handleMessagesSnapshot`):**
+        *   Iterates through added documents (`change.type === 'added'`).
+        *   Calls `processSingleMessage(change.doc)` sequentially for each new message.
+    *   **Core Processing (`processSingleMessage(messageDoc)`):**
+        *   Extracts `uid` and `contactPhoneNumber` from `messageDoc.ref.path`.
+        *   **Skips** if `messageData.isTestMessage === true` or `messageData.sender !== 'user'`.
+        *   Fetches `userDoc` from Firestore using `uid`.
+        *   Retrieves `sheetConfigs = userDoc.data()?.workflows?.whatsapp_agent?.sheetConfigs || []`.
+        *   Filters for `activeConfigs` that have a `sheetId` and `columns`.
+        *   Checks for Google credentials (`refreshToken`) in `userDoc.data()?.credentials?.googleSheetsOAuth`.
+        *   If no active configs or no refresh token, calls `markMessageProcessed` with `skipped` status and returns.
+        *   **Loops through `activeConfigs`:**
+            *   **AI Call:** `extractedData = await aiService.extractDataFromMessage(messageData.message, config.columns)`.
+            *   **Prepare Row:** Creates `rowDataMap` by mapping `config.columns.name` to `extractedData[column.id]`, adding fallbacks for phone/timestamp.
+            *   **Find Row:** `rowIndex = await googleService.findContactRow(uid, config, contactPhoneNumber)`.
+            *   **Write to Sheet:** Calls either `googleService.updateSheetRow(uid, config, rowIndex, rowDataMap)` or `googleService.appendSheetRow(uid, config, rowDataMap)`.
+            *   Handles errors per-config.
+        *   **Mark Processed:** Calls `markMessageProcessed(messageRef, uid, statusData)` with overall success or error status, including details.
+        *   Handles critical errors gracefully within a `try...catch`.
+    *   **Marking Processed (`markMessageProcessed(messageRef, uid, statusData)`):**
+        *   Updates the original message document in Firestore setting `isProcessedByAutomation: true`, `automationStatus: statusData`, and `processedAt` timestamp.
 
 **III. Error Handling & Security**
 
-*   **Consistent Errors:** Use standardized JSON error responses from the API (e.g., `{ success: false, error: 'Detailed message', code: 'ERROR_CODE' }`).
-*   **Logging:** Implement robust logging (e.g., using Winston) at each step: API requests, Firestore access, AI calls, Google API calls, errors.
-*   **Input Validation:** Validate all incoming request bodies (e.g., using `express-validator` or Zod).
-*   **Token Security:** Store Google refresh tokens securely (encrypted in Firestore). Never expose client secrets or API keys on the frontend. Use environment variables (`server/.env`).
-*   **Google API Quotas:** Be mindful of Google API rate limits and implement retry logic or queuing if necessary.
+*   **Backend Focus:** Robust logging (Winston) in all backend services (`messageProcessorService`, `googleService`, `aiService`) is crucial for diagnosing issues in the automated flow.
+*   **Credential Security:** Google refresh tokens are encrypted at rest in Firestore using `TOKEN_ENCRYPTION_KEY` from `server/.env`.
+*   **API Security:** Frontend-facing API endpoints are protected by Firebase Auth middleware. Backend services operate using secure credentials or service accounts.
+*   **Google API Errors:** `googleService` sheet manipulation functions include basic error handling for common Google API errors (403 Permissions, 404 Not Found) and re-throw more user-friendly errors.
+*   **Listener Errors:** `messageProcessorService` includes `handleListenerError` to log critical listener failures and stop the listener (potential for adding retry logic or monitoring). `processSingleMessage` catches errors to prevent one message failure from crashing the entire listener.
+*   **Idempotency:** The `isProcessedByAutomation` flag prevents reprocessing messages. The `findContactRow` logic helps decide between appending and updating.
 
-This detailed technical plan provides a solid foundation. It clearly separates concerns, uses secure practices for credentials, and ensures the data (`fieldsConfig` / `columns`) is fetched and passed correctly to the AI service, preventing the `fields.map is not a function` error by design.
+This refactored backend-driven approach ensures reliable, unattended automation for the Google Sheets integration, separating concerns effectively and improving maintainability.

@@ -20,7 +20,6 @@ import {
   revokeGoogleAuth,
   testGoogleSheetsConnection
 } from '../services/googleSheets';
-import { startWhatsAppGoogleSheetsIntegration } from '../services/whatsappGoogleIntegration';
 import { auth } from '../services/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
@@ -126,14 +125,17 @@ const GoogleSheetsConfig: React.FC = () => {
         const connectionTestPromise = testGoogleSheetsConnection();
         const savedConfigsPromise = getAllSheetConfigs();
 
-        // Wait for parallel calls to complete (Removed authStatusPromise)
+        // Wait for parallel calls to complete
         const [isBackendConnected, configs] = await Promise.all([
           connectionTestPromise,
           savedConfigsPromise
         ]);
 
+        // Add explicit logging for the connection test result
+        console.log(`[GoogleSheetsConfig] Backend connection test result: ${isBackendConnected}`);
+
         // Update state based on results
-        setIsConnected(isBackendConnected);
+        setIsConnected(isBackendConnected); // Connection status from backend test
         setSavedConfigs(configs);
 
         if (configs.length > 0 && !activeConfig) { 
@@ -168,42 +170,6 @@ const GoogleSheetsConfig: React.FC = () => {
 
     loadInitialData();
   }, [authUser, authStatusLoading]);
-
-  // Start the integration when component mounts and conditions are met
-  useEffect(() => {
-    let cleanup: (() => void) | null = null;
-    
-    const startIntegration = async () => {
-      try {
-        console.log('[Integration Startup] Attempting to start listener...');
-        const unsubscribe = await startWhatsAppGoogleSheetsIntegration();
-        console.log('[Integration Startup] Listener started successfully.');
-        cleanup = unsubscribe;
-      } catch (error) {
-        console.error('Error starting Google Sheets integration:', error);
-        toast.error('Failed to start background message listener.');
-      }
-    };
-    
-    // Log the conditions before starting
-    console.log(`[Integration Startup Check] Conditions: isConnected=${isConnected}, hasActiveConfig=${savedConfigs.some(config => config.active)}`);
-
-    if (isConnected && savedConfigs.some(config => config.active)) {
-      startIntegration();
-    } else {
-      console.log('[Integration Startup Check] Conditions not met, listener not started.');
-    }
-    
-    // Cleanup function
-    return () => {
-      if (cleanup) {
-        console.log('[Integration Cleanup] Stopping listener...');
-        cleanup();
-        console.log('[Integration Cleanup] Listener stopped.');
-      }
-    };
-  // Depend on isConnected and savedConfigs to restart if they change
-  }, [isConnected, savedConfigs]);
 
   const handleCreateNewConfig = () => {
     setActiveConfig(null);
@@ -245,19 +211,21 @@ const GoogleSheetsConfig: React.FC = () => {
       // Create/update the sheet with the new configuration properties
       const updatedConfig: SheetConfig = {
         ...newConfig,
-        addTrigger,
+        addTrigger, // Keep saving trigger/update settings, backend listener might use later
         autoUpdateFields,
         columns: newConfig.columns.map(col => ({
           ...col,
-          isAutoPopulated: col.type === 'phone' || col.name.toLowerCase().includes('phone')
+          // isAutoPopulated: col.type === 'phone' || col.name.toLowerCase().includes('phone') // Backend handles auto-populating
         }))
       };
       
-      // Create/update the sheet
-      const configWithSheet = await createSheet(updatedConfig);
+      // Create/update the sheet (if this implies header creation etc.)
+      // const configWithSheet = await createSheet(updatedConfig);
+      // If createSheet ONLY creates headers, it might still be needed.
+      // For now, assume saving config just updates Firestore.
       
-      // Save the configuration
-      const savedConfig = await saveSheetConfig(configWithSheet);
+      // Save the configuration to Firestore via backend API
+      const savedConfig = await saveSheetConfig(updatedConfig);
       
       // Update local state
       const configIndex = savedConfigs.findIndex(c => c.sheetId === savedConfig.sheetId);
@@ -274,13 +242,12 @@ const GoogleSheetsConfig: React.FC = () => {
       
       toast.success('Google Sheets configuration saved successfully');
       
-      // Restart the integration to apply changes
-      const unsubscribe = await startWhatsAppGoogleSheetsIntegration();
+      // REMOVED: No need to restart frontend listener
+      // const unsubscribe = await startWhatsAppGoogleSheetsIntegration();
       
-      // No need to store the unsubscribe function as the component's cleanup will take care of it
     } catch (error) {
       console.error('Error saving Google Sheets configuration:', error);
-      toast.error('Failed to save Google Sheets configuration');
+      toast.error(`Failed to save Google Sheets configuration: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setSaving(false);
     }
@@ -349,7 +316,7 @@ const GoogleSheetsConfig: React.FC = () => {
         updatedColumns[index].aiPrompt = 'Extract the main question or request from the message';
         break;
       case 'date':
-        updatedColumns[index].aiPrompt = 'Automatically add the current timestamp';
+        updatedColumns[index].aiPrompt = 'Automatically add the current timestamp'; // Backend listener should handle timestamp logic
         break;
       default:
         updatedColumns[index].aiPrompt = 'Extract this information from the message';
@@ -364,17 +331,34 @@ const GoogleSheetsConfig: React.FC = () => {
   // Function to handle Google authorization
   const handleGoogleAuth = async () => {
     if (!authUser) {
-       // ... (check)
+        toast.error("Authentication state not loaded yet. Please wait.");
+        return;
     }
+    setAuthStatusLoading(true); // Show loading indicator during auth actions
     try {
-        if (isGoogleAuthorized) { // Logic based on isGoogleAuthorized is correct
+        if (isGoogleAuthorized) { // Disconnect
+           console.log('Attempting to revoke Google Auth...');
            await revokeGoogleAuth();
-           // ... (update state)
-        } else {
-           await authorizeGoogleSheets();
+           setIsGoogleAuthorized(false);
+           setIsConnected(false); // Assume disconnected if revoked
+           setUserSheets([]);
+           setActiveConfig(null); // Clear active config on disconnect
+           setIsEditing(false);
+           toast.success('Successfully disconnected from Google');
+        } else { // Connect
+           console.log('Attempting to authorize Google Sheets...');
+           await authorizeGoogleSheets(); // This should trigger redirect/callback flow
+           // State update will happen when component reloads after callback
+           toast.loading('Redirecting to Google for authorization...');
         }
     } catch (error) {
-      // ... (error handling)
+      console.error('Error during Google Auth handling:', error);
+      toast.error(`Google connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      // Reset state on error?
+      setIsGoogleAuthorized(false);
+      setIsConnected(false);
+    } finally {
+        setAuthStatusLoading(false);
     }
   };
 
@@ -387,17 +371,17 @@ const GoogleSheetsConfig: React.FC = () => {
      toast.error('Please activate at least one sheet configuration before testing');
      return;
    }
-   // Find the first active config to show in toast message (optional)
-   const activeConfig = savedConfigs.find(config => config.active);
-   const configName = activeConfig ? activeConfig.name : 'your sheet';
+   const activeConfigForToast = savedConfigs.find(config => config.active);
+   const configName = activeConfigForToast ? activeConfigForToast.name : 'your sheet';
 
-   const testIntegrationToastId = 'test-integration'; // Use a consistent ID
+   const testIntegrationToastId = 'test-integration';
    toast.loading('Sending & processing test message...', { id: testIntegrationToastId });
 
    try {
      const testPhoneNumber = `test-${Date.now()}`;
      const testMessageId = `test-message-${Date.now()}`;
      
+     // Dynamically import firestore functions to avoid making them direct dependencies if not needed
      const { doc, setDoc } = await import('firebase/firestore');
      const { db } = await import('../services/firebase');
      const userUID = authUser.uid;
@@ -409,24 +393,22 @@ const GoogleSheetsConfig: React.FC = () => {
          message: 'Hello, this is a test message from ChatMimic Connect. Please extract my name (Test User) and my inquiry (Checking test functionality). My number is +10000000000. Product: Test Product.',
          timestamp: Date.now(),
          sender: 'user',
-         isTestMessage: true // Flag to prevent listener processing
+         isTestMessage: true // Flag for backend service to ignore
        }
      );
      console.log(`[Test Integration] Added test message doc ${testMessageId} for ${testPhoneNumber}`);
 
-     // Restore manual processing call
-     console.log(`[Test Integration] Manually calling processWhatsAppMessage for ${testPhoneNumber}/${testMessageId}`);
+     // Call the frontend service function which handles the test flow via API calls
+     console.log(`[Test Integration] Calling processWhatsAppMessage for ${testPhoneNumber}/${testMessageId}`);
      const { processWhatsAppMessage } = await import('../services/whatsappGoogleIntegration');
      const processingResult = await processWhatsAppMessage(testPhoneNumber, testMessageId);
 
-     // Restore success/error feedback based on result
      if (processingResult) {
        toast.success(`Test message processed successfully! Check sheet "${configName}".`, { id: testIntegrationToastId, duration: 6000 });
-       console.log(`[Test Integration] Manual processing successful for ${testPhoneNumber}/${testMessageId}`);
+       console.log(`[Test Integration] Test processing calls initiated successfully for ${testPhoneNumber}/${testMessageId}`);
      } else {
-       // Provide more specific feedback if possible, otherwise generic failure
        toast.error("Test message processing failed. Check console for details.", { id: testIntegrationToastId, duration: 5000 });
-       console.error(`[Test Integration] Manual processing failed for ${testPhoneNumber}/${testMessageId}`);
+       console.error(`[Test Integration] Test processing initiated failed for ${testPhoneNumber}/${testMessageId}`);
      }
 
    } catch (error) {

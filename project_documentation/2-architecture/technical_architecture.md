@@ -2,100 +2,101 @@
 
 ## Overview
 
-ChatMimic Connect is a WhatsApp AI agent management platform that allows businesses to create, configure, and manage AI-powered WhatsApp chatbots. The platform integrates with WhatsApp Business API, Firebase, and Supabase to provide a complete solution for businesses to automate their customer interactions.
+ChatMimic Connect employs a modern web architecture separating frontend and backend concerns. It leverages cloud services like Firebase for real-time data and authentication, Supabase for relational data and vector embeddings, and external AI APIs (OpenAI, Groq) for its core intelligence.
 
-## Database Architecture
+## Frontend (Client-Side)
 
-The application uses a dual-database approach:
+- **Framework:** React with TypeScript (using Vite for bundling)
+- **State Management:** React Context API, potentially Zustand or Redux for more complex state.
+- **UI Components:** Shadcn UI library, custom components.
+- **Routing:** React Router.
+- **Key Responsibilities:**
+    - User Interface & User Experience (Configuration pages, Chat Dashboard).
+    - User Authentication flow (handling Firebase UI interactions).
+    - Initiating Google OAuth flow via backend API.
+    - Displaying real-time chat data (listening to Firebase).
+    - Sending user messages via backend API.
+    - Managing agent & WhatsApp configurations via backend API.
+    - **Managing Google Sheets configurations** via backend API (saving, listing sheets, testing connection, disconnecting).
+    - Triggering the Google Sheets integration **manual test** via UI button (calls backend APIs).
+    - **Note:** Does *not* handle persistent listening or automatic processing of incoming WhatsApp messages for Sheets integration. This is now handled entirely by the backend.
 
-### 1. Firebase (Firestore)
+## Backend (Server-Side)
 
-Used for real-time messaging, user authentication, and WhatsApp integration.
+- **Platform:** Node.js with Express framework.
+- **Authentication:** Firebase Authentication (validating JWTs via Firebase Admin SDK).
+- **Database:**
+    - **Firebase Firestore:** Real-time storage for user data, WhatsApp chat messages, encrypted Google OAuth credentials, Google Sheet configurations (`workflows.whatsapp_agent.sheetConfigs`).
+    - **Supabase (PostgreSQL):** Storage for agent configurations, business information, vector embeddings (using pgvector).
+- **API:** RESTful API endpoints for frontend interactions (config management, Google OAuth, Google Sheet UI support, AI proxy).
+- **Key Services & Responsibilities:**
+    - **`server/index.js`:** Main application entry point, initializes Firebase Admin, sets up middleware (CORS, Helmet, Rate Limiting), registers routes, **initializes and starts the background message processor service**. Handles graceful shutdown.
+    - **`server/middleware/auth.js`:** Handles Firebase token verification for protected routes.
+    - **`server/routes/*`:** Define API endpoints for various functionalities (config, proxy, Google Sheets UI support, AI).
+    - **`server/services/googleService.js`:** Handles all direct interactions with Google APIs (Sheets, Drive, OAuth token management) using stored user credentials (fetched via UID). Manages token encryption/decryption and refresh. **Provides functions for finding, appending, and updating rows in Google Sheets**, used by `messageProcessorService`.
+    - **`server/services/aiService.js`:** Handles interactions with AI APIs (currently Groq via Axios) for tasks like data extraction. Uses server-side API keys. Called by `messageProcessorService`.
+    - **`server/services/embeddingService.js` (or similar):** Handles interactions with OpenAI API for generating text embeddings.
+    - **`server/services/messageProcessorService.js`:** **(Core Google Sheets Automation Engine)**
+        - Runs persistently after server startup, initialized in `index.js`.
+        - Uses Firebase Admin SDK (`onSnapshot`) to listen to the `messages` collection group in Firestore for new, unprocessed user messages (`isProcessedByAutomation: false`, `sender: 'user'`).
+        - Orchestrates the processing pipeline for Sheets integration:
+            - Fetches the relevant user's active Google Sheet configuration(s) and credentials from Firestore.
+            - Calls `aiService.extractDataFromMessage` for data extraction based on the message and configured columns.
+            - Calls `googleService.findContactRow` to check for existing entries.
+            - Calls `googleService.appendSheetRow` or `googleService.updateSheetRow` to interact with the Google Sheets API using the user's stored credentials.
+            - Updates the processed message document in Firestore (`isProcessedByAutomation: true`, `automationStatus`).
+    - **`server/services/proxyService.js` (If Applicable):** Handles secure proxying of requests to external services.
+    - **`server/utils/logger.js`:** Centralized logging using Winston.
+    - **`server/utils/encryption.js` (If Applicable):** Handles encryption/decryption of sensitive data like Google OAuth tokens stored in Firestore.
 
-#### Collections Structure:
+## Databases
 
-**Users Collection**
-- `{uid}` (document)
-  - `email`: User's email address
-  - `workflows` (map)
-    - `{workflow_name}` (map)
-      - `executions_used`: Number of executions used
-      - `limit`: Usage limit
-      - `reset_date`: Date when limit resets
-      - `paid`: Boolean indicating if paid
-  - `credentials` (map)
-    - `googleAuthCredentials` (map): Google Analytics credentials
-    - `whatsappCredentials` (map): WhatsApp credentials
+- **Firebase Firestore:**
+    - **`/Users/{uid}`:** Stores user profile information, API keys (e.g., WhatsApp), encrypted Google OAuth credentials, agent configuration references, Google Sheet configurations (`workflows.whatsapp_agent.sheetConfigs`).
+    - **`/Whatsapp_Data/{uid}/chats/{phoneNumber}/messages/{messageId}`:** Stores individual WhatsApp messages with sender info, timestamp, content, and processing flags like `isProcessedByAutomation`, `automationStatus`, `isTestMessage`.
+    - Real-time capabilities used for chat updates on the frontend.
+    - **Listener:** The backend `messageProcessorService` uses a collection group query on `messages` with appropriate filters.
+- **Supabase (PostgreSQL):**
+    - Stores detailed agent configurations (business info, communication style, Q&A).
+    - Stores vector embeddings generated from configuration data.
+    - `pgvector` extension used for similarity searches.
+    - Row Level Security (RLS) should be enabled, ensuring users can only access their own data.
 
-**Whatsapp_Data Collection**
-- `{uid}` (document)
-  - `client_number`: WhatsApp business number ID
-  - `chats` (subcollection)
-    - `{phone_number}` (document)
-      - `agentStatus`: Status of the AI agent ("on" or "off")
-      - `contactName`: Name of the contact
-      - `createdAt`: Creation timestamp
-      - `humanAgent`: Boolean indicating if a human agent is active
-      - `lastMessage`: Content of the last message
-      - `lastMessageSender`: Sender of the last message
-      - `lastMessageTime`: Timestamp of the last message
-      - `phoneNumber`: Contact's phone number
-      - `status`: Chat status (open, closed)
-      - `tags`: Array of tags for categorization
-      - `messages` (subcollection)
-        - `{message_id}` (document)
-          - `date`: Date string (e.g., "11/03/2025")
-          - `message`: Message content
-          - `sender`: Message sender ("agent", "human", or "user")
-          - `timestamp`: Timestamp when message was sent
-  - `templates` (subcollection)
-    - `{template_id}` (document)
-      - `name`: Template name
-      - `content`: Template content
-      - `created_at`: Creation timestamp
-      - `is_active`: Boolean indicating if template is active
-      - `type`: Template type (e.g., "auto_reply")
+## Integrations
 
-### 2. Supabase (PostgreSQL)
+- **WhatsApp Business API:** Via Meta platform, using access tokens. Webhook configured to receive incoming messages, which are stored in Firestore.
+- **Firebase:** Authentication, Firestore (real-time data, configs, credentials, message storage, trigger for backend listener).
+- **Supabase:** PostgreSQL database, vector embeddings/search.
+- **OpenAI API:** For text embeddings.
+- **Groq API:** For LLM tasks like data extraction (called from backend `aiService`).
+- **Google APIs (Sheets, Drive, OAuth):** Called securely from the backend (`googleService`) using user-authorized credentials stored in Firestore.
 
-Used for storing agent configurations and vector embeddings for AI responses.
+## Data Flow (Google Sheets Automation Example - Updated Flow)
 
-#### Tables Structure:
+1.  **WhatsApp Message Received:** WhatsApp -> Meta Webhook -> Backend Webhook Endpoint -> Message stored in Firestore (`/Whatsapp_Data/{uid}/chats/{phone}/messages/{msgId}`) with `sender: 'user'`, `isProcessedByAutomation: false` (and no `isTestMessage: true`).
+2.  **Backend Listener Triggered:** The persistent `messageProcessorService.js` running on the server detects the new message document via its Firestore `onSnapshot` listener (`collectionGroup('messages').where('isProcessedByAutomation', '==', false)`).
+3.  **Processing Initiated:** The service's `processSingleMessage(messageDoc)` function is invoked.
+4.  **User Config Fetched:** The service extracts the `uid` from the message path, fetches the user's document (`/Users/{uid}`), retrieves active Google Sheet configuration(s) (`sheetConfigs`) and checks for Google credentials (`refreshToken`).
+5.  **AI Extraction:** For each active config, the service calls `aiService.extractDataFromMessage(messageData.message, config.columns)`.
+6.  **Sheet Interaction:** The service calls `googleService.findContactRow(uid, config, contactPhoneNumber)`. Based on the result, it calls either `googleService.appendSheetRow(uid, config, rowData)` or `googleService.updateSheetRow(uid, config, rowIndex, rowData)`. These `googleService` functions handle authentication using the user's stored credentials.
+7.  **Message Updated:** The service updates the original message document in Firestore via `markMessageProcessed`, setting `isProcessedByAutomation: true` and `automationStatus` details.
 
-For each user, two tables are dynamically created with names based on the MD5 hash of the user's Firebase UID:
+## Security Considerations
 
-**Main Configuration Table (`user_table_{md5(uid)}`)**
-- `id`: Serial primary key
-- `company_info`: JSONB object containing company information
-  - `name`: Company name
-  - `industry`: Industry type
-  - `website`: Company website
-  - `locations`: Array of locations
-  - `contact_info`: Contact information
-- `services`: JSONB object containing service information
-  - `main_offerings`: Array of main services offered
-  - `special_features`: Array of special features
-- `communication_style`: JSONB object containing communication preferences
-  - `tone`: Preferred tone (e.g., "Professional yet friendly")
-  - `languages`: Array of supported languages
-  - `emoji_usage`: Boolean indicating if emojis should be used
-  - `response_length`: Preferred response length
-- `business_processes`: JSONB object containing business process information
-  - `common_questions`: Array of common customer questions
-  - `special_requirements`: Array of special requirements
-- `integrations`: JSONB object containing integration information
-  - `required_integrations`: Array of required integrations
-  - `automation_preferences`: Automation preferences
-  - `lead_process`: Lead processing information
-- `created_at`: Timestamp of creation
-- `updated_at`: Timestamp of last update
+- Secure handling of API keys and user credentials (encryption at rest for Google tokens).
+- Input validation on all API endpoints.
+- Authentication middleware (`requireAuth`) protecting relevant backend routes.
+- Rate limiting applied to backend APIs.
+- Supabase Row Level Security.
+- Proper CORS and Helmet configuration.
 
-**Embeddings Table (`user_embeddings_{md5(uid)}`)**
-- `id`: Serial primary key
-- `content`: Text content
-- `embedding`: Vector(1536) for semantic search
-- `query_name`: Name of the query
-- `created_at`: Timestamp of creation
+## Scalability Considerations
+
+- Firestore/Supabase scale automatically to a large extent.
+- Backend server may need horizontal scaling under heavy load (multiple instances).
+- Optimize Firestore queries (indexing, filtering).
+- Optimize Supabase vector searches.
+- Consider message queues (like Google Pub/Sub or RabbitMQ) for decoupling message ingestion from processing if the listener becomes a bottleneck (Future optimization).
 
 ## Key SQL Functions
 
@@ -213,13 +214,6 @@ Manages user settings and integrations:
 3. AI agent retrieves relevant context using vector similarity search
 4. OpenAI API is used to generate a response based on the context
 5. Response is sent back to the user and stored in Firebase
-
-## Security Considerations
-
-1. **Authentication**: Firebase Authentication is used for user authentication
-2. **Data Isolation**: Each user's data is stored in separate tables in Supabase
-3. **API Keys**: API keys are stored in environment variables
-4. **Row Level Security**: RLS is disabled for simplicity in development but should be enabled in production
 
 ## Deployment Architecture
 
