@@ -1,32 +1,63 @@
 console.log('[DEBUG] services/googleService.js executing...');
 
-/**
- * Google API service for handling OAuth tokens and API calls
- */
-const admin = require('firebase-admin');
-const { google } = require('googleapis');
-const crypto = require('crypto');
-const axios = require('axios');
-const logger = require('../utils/logger');
-
-console.log('[DEBUG] googleService.js: Logging env vars for OAuth2 client...');
+console.log('[DEBUG] googleService.js: PRE-CHECK Env Vars...');
 console.log(`[DEBUG] GOOGLE_CLIENT_ID: ${process.env.GOOGLE_CLIENT_ID ? 'Set' : 'MISSING'}`);
 console.log(`[DEBUG] GOOGLE_CLIENT_SECRET: ${process.env.GOOGLE_CLIENT_SECRET ? 'Set' : 'MISSING'}`);
 console.log(`[DEBUG] GOOGLE_REDIRECT_URI: ${process.env.GOOGLE_REDIRECT_URI ? 'Set' : 'MISSING'}`);
+console.log('[DEBUG] googleService.js: POST-CHECK Env Vars.');
 
-// OAuth2 client setup
-console.log('[DEBUG] googleService.js: About to create OAuth2 client...');
-try {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
-  );
-  console.log('[DEBUG] googleService.js: OAuth2 client created successfully.');
-} catch (oauthError) {
-  console.error('[CRITICAL] Failed to create OAuth2 client:', oauthError);
-  throw oauthError;
-}
+
+console.log('[DEBUG] googleService.js: BEFORE require firebase-admin');
+const admin = require('firebase-admin');
+console.log('[DEBUG] googleService.js: AFTER require firebase-admin');
+
+console.log('[DEBUG] googleService.js: BEFORE require googleapis');
+const { google } = require('googleapis');
+console.log('[DEBUG] googleService.js: AFTER require googleapis');
+
+console.log('[DEBUG] googleService.js: BEFORE require crypto');
+const crypto = require('crypto');
+console.log('[DEBUG] googleService.js: AFTER require crypto');
+
+console.log('[DEBUG] googleService.js: BEFORE require axios');
+const axios = require('axios');
+console.log('[DEBUG] googleService.js: AFTER require axios');
+
+console.log('[DEBUG] googleService.js: BEFORE require logger');
+const logger = require('../utils/logger');
+console.log('[DEBUG] googleService.js: AFTER require logger');
+
+console.log('[DEBUG] googleService.js: ALL Top-Level Requires Completed.');
+
+/**
+ * Google API service for handling OAuth tokens and API calls
+ */
+
+/**
+ * Helper function to create an OAuth2 client instance.
+ * Ensures required environment variables are present.
+ */
+const createOAuth2Client = () => {
+    console.log('[DEBUG] googleService.js: ENTER createOAuth2Client'); // Log entry
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+
+    if (!clientId || !clientSecret || !redirectUri) {
+        logger.error('[CRITICAL] Missing Google OAuth environment variables (ID, SECRET, or REDIRECT_URI). Cannot create OAuth2 client.');
+        throw new Error('Google OAuth credentials missing in environment.');
+    }
+    try {
+        console.log('[DEBUG] googleService.js: Attempting new google.auth.OAuth2 in createOAuth2Client');
+        const client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+        console.log('[DEBUG] googleService.js: OAuth2 client created successfully within function.'); // Changed log level
+        return client;
+    } catch (error) {
+        logger.error('[CRITICAL] Failed to create OAuth2 client within function:', error);
+        console.error('[CRITICAL] Failed to create OAuth2 client within function:', error); // Also log to console
+        throw error; // Re-throw the error
+    }
+};
 
 /**
  * Helper function to decrypt sensitive data
@@ -146,26 +177,20 @@ const getValidCredentials = async (userId) => {
     if (isExpired && refresh_token) {
       logger.info(`Refreshing Google token for user ${userId}`);
       
-      const clientId = process.env.GOOGLE_CLIENT_ID;
-      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-      
-      if (!clientId || !clientSecret) {
-        throw new Error('Google OAuth client credentials (ID or SECRET) not configured on server.');
-      }
-      
+      // Create client here when needed
+      const oauth2Client = createOAuth2Client(); 
+      oauth2Client.setCredentials({ refresh_token: refresh_token });
+
       try {
-        const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
-          client_id: clientId,
-          client_secret: clientSecret,
-          refresh_token: refresh_token,
-          grant_type: 'refresh_token'
-        }, {
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
+        // Use the client instance to refresh
+        const { credentials: newCredentials } = await oauth2Client.refreshAccessToken();
+        const new_access_token = newCredentials.access_token;
+        const expires_in = (newCredentials.expiry_date - Date.now()) / 1000; // Calculate remaining seconds
         
-        const { access_token: new_access_token, expires_in } = tokenResponse.data;
+        if (!new_access_token) {
+            throw new Error('Refresh token request succeeded but did not return an access token.');
+        }
+
         logger.info(`Successfully refreshed Google token for user ${userId}`);
         
         // Update token in database
@@ -239,54 +264,52 @@ const updateCredentialsInDb = async (userId, accessToken, expiresIn) => {
  */
 const exchangeCodeForTokens = async (code, redirectUri) => {
   try {
-    if (!code || !redirectUri) {
-      throw new Error('Missing required parameters for token exchange');
+    if (!code) {
+      throw new Error('Missing authorization code for token exchange');
     }
-    
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    
-    if (!clientId || !clientSecret) {
-      throw new Error('Google OAuth credentials not configured');
-    }
-    
-    const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
-      client_id: clientId,
-      client_secret: clientSecret,
-      code,
-      redirect_uri: redirectUri,
-      grant_type: 'authorization_code'
-    }, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
+    // Note: redirectUri is passed from the caller (googleOAuth.js) which should match the one used for auth URL generation
+    logger.debug(`Exchanging code for tokens with redirectUri: ${redirectUri}`);
+
+    // Create client here when needed
+    const oauth2Client = createOAuth2Client(); 
+
+    const { tokens } = await oauth2Client.getToken({
+      code: code,
+      redirect_uri: redirectUri // Pass the redirectUri here
     });
-    
-    return tokenResponse.data;
+    logger.info('Successfully exchanged code for tokens.');
+    return tokens;
   } catch (error) {
-    logger.error('Error exchanging code for tokens:', error);
-    throw new Error(`Failed to exchange code for tokens: ${error.message}`);
+    logger.error('Error exchanging authorization code for tokens:', {
+      errorMessage: error.message,
+      response: error.response?.data, // Log Google's response if available
+    });
+    // Provide a more specific error message if possible
+    const googleError = error.response?.data?.error;
+    const googleErrorDesc = error.response?.data?.error_description;
+    if (googleError === 'invalid_grant') {
+        throw new Error(`Failed to exchange code: Invalid authorization code or redirect URI mismatch. ${googleErrorDesc || ''}`.trim());
+    } else if (googleError) {
+        throw new Error(`Failed to exchange code: ${googleError} - ${googleErrorDesc || error.message}`);
+    } else {
+        throw new Error(`Failed to exchange code: ${error.message}`);
+    }
   }
 };
 
 /**
- * Creates an authenticated OAuth2 client instance for a user.
- * IMPORTANT: Ensure credentials have a valid access_token before calling.
- * @param {Object} credentials - User credentials containing access_token, refresh_token.
- * @returns {google.auth.OAuth2} Authenticated OAuth2 client
+ * Creates an OAuth2 client instance and sets the user's credentials.
+ * @param {object} credentials - The user's credentials (access_token, refresh_token).
+ * @returns {google.auth.OAuth2} Authenticated OAuth2 client.
  */
 const createOAuth2ClientWithCredentials = (credentials) => {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
-
-  if (!clientId || !clientSecret || !redirectUri) {
-    throw new Error('Google OAuth client credentials not configured on server.');
-  }
-
-  const client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
-  client.setCredentials(credentials); // Set the user-specific tokens
-  return client;
+    if (!credentials || !credentials.access_token) {
+        throw new Error('Cannot create authenticated client without valid credentials (access token).');
+    }
+    const oauth2Client = createOAuth2Client(); // Use the helper
+    oauth2Client.setCredentials(credentials);
+    logger.debug('Created OAuth2 client with user credentials.');
+    return oauth2Client;
 };
 
 /**
@@ -297,12 +320,15 @@ const createOAuth2ClientWithCredentials = (credentials) => {
  */
 const getAuthenticatedSheetsClient = async (userId) => {
   try {
+    logger.debug(`Getting authenticated sheets client for user ${userId}`);
     const credentials = await getValidCredentials(userId);
     if (!credentials || !credentials.access_token) {
       throw new Error('Could not retrieve valid Google credentials for Sheets API client.');
     }
-    const authClient = createOAuth2ClientWithCredentials(credentials);
-    return google.sheets({ version: 'v4', auth: authClient });
+    const oauth2Client = createOAuth2ClientWithCredentials(credentials);
+    const sheetsClient = google.sheets({ version: 'v4', auth: oauth2Client });
+    logger.debug(`Authenticated sheets client ready for user ${userId}`);
+    return sheetsClient;
   } catch (error) {
     logger.error(`Failed to get authenticated Sheets client for user ${userId}:`, error);
     // Re-throw the error, possibly wrapping it if needed
@@ -474,4 +500,6 @@ module.exports = {
   findContactRow,
   appendSheetRow,
   updateSheetRow
-}; 
+};
+
+console.log('[DEBUG] googleService.js: Module export complete.'); 

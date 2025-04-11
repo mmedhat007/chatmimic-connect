@@ -4,9 +4,9 @@ const logger = require('../utils/logger');
 // Load API Key from server environment variables
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-// Define models
-const MODEL_NAME = 'deepseek-r1-distill-llama-70b';
-const FALLBACK_MODEL_NAME = 'llama-3.1-70b-versatile';
+// Define models - SWAPPED: Llama 3.1 8b is now primary, Deepseek is fallback
+const MODEL_NAME = 'llama3-8b-8192';
+const FALLBACK_MODEL_NAME = 'deepseek-r1-distill-llama-70b';
 
 /**
  * Generates default AI prompts based on field types.
@@ -179,7 +179,98 @@ Format your response as valid JSON with each field ID as a key.`;
   }
 };
 
+/**
+ * Checks a message for buying interest using the Groq API.
+ * @param {string} message The message text.
+ * @param {string[]} keywords Optional keywords to guide the AI.
+ * @returns {Promise<boolean>} True if buying interest is detected, false otherwise.
+ */
+const checkInterest = async (message, keywords = []) => {
+  if (!GROQ_API_KEY) {
+    logger.error('[AI Service - Interest Check] GROQ_API_KEY is not configured.');
+    return false; // Cannot proceed without API key
+  }
+
+  // Stricter System Prompt
+  const systemMessage = `You are an AI assistant. Analyze the user message for buying interest (e.g., asking for price, wanting to purchase, expressing intent to buy). 
+Keywords to consider: ${keywords.length > 0 ? keywords.join(', ') : '[None provided - rely on general buying intent]'}. 
+Respond with ONLY the word "true" if buying interest is detected, or ONLY the word "false" if not. NO OTHER TEXT.`;
+
+  const userMessage = `Message: "${message}"`;
+
+  let modelUsed = MODEL_NAME; // Start with the (new) primary model
+  let attempt = 1;
+
+  while (attempt <= 2) {
+    try {
+      logger.debug(`[AI Service - Interest Check] Attempt ${attempt}: Calling Groq API with model: ${modelUsed}`);
+      const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+        model: modelUsed,
+        messages: [
+          { role: 'system', content: systemMessage },
+          { role: 'user', content: userMessage }
+        ],
+        temperature: 0,
+        max_tokens: 10 // Needs very few tokens for true/false
+      }, {
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const aiContent = response.data?.choices?.[0]?.message?.content?.trim().toLowerCase();
+      logger.debug(`[AI Service - Interest Check] Raw AI response from ${modelUsed}: "${aiContent}"`);
+
+      // Improved Check:
+      if (aiContent) {
+        if (aiContent.includes('true')) { 
+          logger.info(`[AI Service - Interest Check] Detected buying interest (contains 'true'). Model: ${modelUsed}`);
+          return true;
+        } else if (aiContent.includes('false')) { 
+          logger.info(`[AI Service - Interest Check] No buying interest detected (contains 'false'). Model: ${modelUsed}`);
+          return false;
+        }
+      }
+      
+      // If neither 'true' nor 'false' is found in the response:
+      logger.warn(`[AI Service - Interest Check] Unexpected response from ${modelUsed}: "${aiContent}".`);
+      if (attempt === 1) {
+          logger.warn(`[AI Service - Interest Check] Retrying with fallback model ${FALLBACK_MODEL_NAME}.`);
+          modelUsed = FALLBACK_MODEL_NAME;
+          attempt++;
+          continue; // Go to next iteration
+      }
+      // If it was the second attempt or response was empty, assume false
+      logger.warn(`[AI Service - Interest Check] Assuming no interest after ${attempt} attempts or unexpected response.`);
+      return false; 
+
+    } catch (error) {
+      logger.error(`[AI Service - Interest Check] Groq API error on attempt ${attempt} with model ${modelUsed}: ${error.message}`);
+      if (error.response) {
+        logger.error(`[AI Service - Interest Check] Groq Error Status: ${error.response.status}`);
+        logger.error(`[AI Service - Interest Check] Groq Error Data: ${JSON.stringify(error.response.data)}`);
+      }
+
+      // Retry logic (remains the same - retry on 5xx/network error for first attempt)
+      if (attempt === 1 && (!error.response || error.response.status >= 500)) {
+        logger.warn(`[AI Service - Interest Check] Retrying with fallback model: ${FALLBACK_MODEL_NAME}`);
+        modelUsed = FALLBACK_MODEL_NAME;
+        attempt++;
+      } else {
+        logger.error(`[AI Service - Interest Check] Failed after ${attempt} attempt(s) or due to non-retriable error. Assuming no interest.`);
+        return false; 
+      }
+    }
+  }
+
+  // Fallback if loop completes unexpectedly
+  logger.error('[AI Service - Interest Check] Reached end of function unexpectedly after loop. Assuming no interest.');
+  return false;
+};
+
 // Restore original export
 module.exports = {
-  extractDataFromMessage
+  extractDataFromMessage,
+  checkInterest
 };

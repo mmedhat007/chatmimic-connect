@@ -115,7 +115,7 @@ try {
     credential: admin.credential.cert(serviceAccountPath),
     databaseURL: process.env.FIREBASE_DATABASE_URL,
   });
-  logger.info('Firebase Admin SDK initialized successfully.'); // Simplified message
+  logger.info('Firebase Admin SDK initialized successfully.'); 
 } catch (error) {
   console.error('[CRITICAL] Error initializing Firebase Admin SDK:', error);
   logger.error('CRITICAL: Error initializing Firebase Admin SDK. Authentication will likely fail.', {

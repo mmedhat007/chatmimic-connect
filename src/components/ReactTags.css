@@ -1,0 +1,106 @@
+/* Example Styles for React Tags */
+
+.react-tags-wrapper {
+  position: relative;
+}
+
+/* Container for tags */
+.tagsContainer {
+  /* Use Tailwind/Shadcn classes if possible, otherwise basic styles */
+  border: 1px solid hsl(214.3, 31.8%, 91.4%); /* equivalent to border-input */
+  border-radius: 0.375rem; /* equivalent to rounded-md */
+  padding: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem; /* space between tags */
+  background-color: white;
+}
+
+/* Input field area */
+.tagInput {
+  flex-grow: 1;
+  display: inline-block; /* Allows input to flow with tags */
+}
+
+/* The actual input field */
+.tagInputField {
+  width: 100%;
+  border: none;
+  outline: none;
+  font-size: 0.875rem; /* text-sm */
+  padding: 0.25rem 0; /* Adjust as needed */
+  background-color: transparent;
+  color: hsl(222.2, 84%, 4.9%); /* primary text color */
+}
+
+.tagInputField::placeholder {
+  color: hsl(215, 20.2%, 65.1%); /* muted-foreground */
+}
+
+
+/* Container for the selected tags */
+.selectedTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem; /* Slightly smaller gap for tags */
+  padding: 0; /* Reset padding if needed */
+  margin: 0; /* Reset margin */
+  list-style: none;
+}
+
+/* Individual tag item */
+.tagItem {
+  display: inline-flex; /* Use flex to align remove button */
+  align-items: center;
+  background-color: hsl(210, 40%, 96.1%); /* secondary */
+  color: hsl(215.4, 16.3%, 46.9%); /* secondary-foreground */
+  border-radius: 0.25rem; /* rounded-sm */
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem; /* text-sm */
+  line-height: 1.25rem;
+}
+
+/* Remove button 'x' on each tag */
+.tagRemoveButton {
+  color: hsl(215.4, 16.3%, 46.9%); /* secondary-foreground */
+  background: none;
+  border: none;
+  cursor: pointer;
+  margin-left: 0.375rem; /* space between text and 'x' */
+  padding: 0;
+  font-size: 1rem; /* Adjust size of 'x' */
+  line-height: 1; /* Ensure 'x' aligns well */
+}
+
+.tagRemoveButton:hover {
+  color: hsl(222.2, 84%, 4.9%); /* primary text color */
+}
+
+/* Suggestions dropdown (optional styling if using autocomplete) */
+.tagSuggestions {
+  position: absolute;
+  z-index: 10;
+  background-color: white;
+  border: 1px solid hsl(214.3, 31.8%, 91.4%);
+  border-radius: 0.375rem;
+  margin-top: 0.25rem;
+  max-height: 150px;
+  overflow-y: auto;
+  width: 100%; /* Or adjust as needed */
+}
+
+.tagSuggestions ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.tagSuggestions li {
+  padding: 0.5rem;
+  cursor: pointer;
+}
+
+.tagSuggestions li.activeSuggestion {
+  background-color: hsl(210, 40%, 98%); /* accent */
+  color: hsl(222.2, 47.4%, 11.2%); /* accent-foreground */
+} 

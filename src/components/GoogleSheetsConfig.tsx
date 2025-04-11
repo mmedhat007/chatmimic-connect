@@ -22,6 +22,9 @@ import {
 } from '../services/googleSheets';
 import { auth } from '../services/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
+// Import ReactTags and its CSS
+import { WithContext as ReactTags, Tag } from 'react-tag-input';
+import './ReactTags.css'; // We'll create this file for styling
 
 // Constants for Google OAuth
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
@@ -89,8 +92,11 @@ const GoogleSheetsConfig: React.FC = () => {
     lastUpdated: Date.now()
   });
 
-  const [addTrigger, setAddTrigger] = useState<'first_message' | 'show_interest' | 'manual'>('first_message');
+  // State for trigger and update settings
+  const [addTrigger, setAddTrigger] = useState<'first_message' | 'Interest Detected' | 'manual'>('first_message');
   const [autoUpdateFields, setAutoUpdateFields] = useState(true);
+  // Use the imported Tag type for the state
+  const [interestKeywordsTags, setInterestKeywordsTags] = useState<Tag[]>([]); 
 
   // Effect to listen for Firebase Auth state changes
   useEffect(() => {
@@ -182,25 +188,25 @@ const GoogleSheetsConfig: React.FC = () => {
       active: true,
       lastUpdated: Date.now()
     });
+    setAddTrigger('first_message');
+    setAutoUpdateFields(true);
+    // Reset tags state
+    setInterestKeywordsTags([]); 
   };
 
   const handleEditConfig = (config: SheetConfig) => {
     setActiveConfig(config);
     setNewConfig({ ...config });
-    
-    // Load the addTrigger and autoUpdateFields from the config if they exist
-    if (config.addTrigger) {
-      setAddTrigger(config.addTrigger);
-    } else {
-      setAddTrigger('first_message'); // Default
-    }
-    
-    if (config.autoUpdateFields !== undefined) {
-      setAutoUpdateFields(config.autoUpdateFields);
-    } else {
-      setAutoUpdateFields(true); // Default
-    }
-    
+    setAddTrigger(config.addTrigger as 'first_message' | 'Interest Detected' | 'manual' || 'first_message');
+    setAutoUpdateFields(config.autoUpdateFields !== undefined ? config.autoUpdateFields : true);
+    // Convert string[] from config to Tag[] for the component state
+    // Explicitly add className to satisfy the Tag type
+    const initialTags: Tag[] = (config.interestKeywords || []).map((text, index) => ({
+       id: String(index), 
+       text: text,
+       className: undefined // Add className explicitly
+    }));
+    setInterestKeywordsTags(initialTags);
     setIsEditing(true);
   };
 
@@ -208,14 +214,17 @@ const GoogleSheetsConfig: React.FC = () => {
     setSaving(true);
     
     try {
-      // Create/update the sheet with the new configuration properties
+      // Convert Tag[] back to string[] for saving
+      const keywordsToSave = interestKeywordsTags.map(tag => tag.text);
+
       const updatedConfig: SheetConfig = {
         ...newConfig,
-        addTrigger, // Keep saving trigger/update settings, backend listener might use later
+        addTrigger,
         autoUpdateFields,
+        // Save the string array
+        interestKeywords: addTrigger === 'Interest Detected' ? keywordsToSave : [], 
         columns: newConfig.columns.map(col => ({
           ...col,
-          // isAutoPopulated: col.type === 'phone' || col.name.toLowerCase().includes('phone') // Backend handles auto-populating
         }))
       };
       
@@ -327,6 +336,28 @@ const GoogleSheetsConfig: React.FC = () => {
       columns: updatedColumns
     });
   };
+
+  // --- ReactTags Handlers ---
+  const handleKeywordDelete = (i: number) => {
+    setInterestKeywordsTags(interestKeywordsTags.filter((_, index) => index !== i));
+  };
+
+  const handleKeywordAddition = (tag: Tag) => {
+    if (!tag.text.trim() || interestKeywordsTags.some(existingTag => existingTag.text.toLowerCase() === tag.text.trim().toLowerCase())) {
+      return;
+    }
+    // When adding, ensure the structure matches the Tag type (id, text, optional className)
+    const newTag: Tag = { id: tag.text.trim(), text: tag.text.trim(), className: undefined }; 
+    setInterestKeywordsTags([...interestKeywordsTags, newTag]);
+  };
+
+  const handleKeywordDrag = (tag: Tag, currPos: number, newPos: number) => {
+    const newTags = [...interestKeywordsTags];
+    newTags.splice(currPos, 1);
+    newTags.splice(newPos, 0, tag);
+    setInterestKeywordsTags(newTags);
+  };
+  // --- End ReactTags Handlers ---
 
   // Function to handle Google authorization
   const handleGoogleAuth = async () => {
@@ -528,46 +559,72 @@ const GoogleSheetsConfig: React.FC = () => {
 
             {/* New fields for addTrigger and autoUpdateFields */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="add-trigger">When to add contacts</Label>
-                <Select 
-                  value={addTrigger} 
-                  onValueChange={(value: 'first_message' | 'show_interest' | 'manual') => setAddTrigger(value)}
-                >
-                  <SelectTrigger id="add-trigger">
-                    <SelectValue placeholder="Select when to add contacts" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="first_message">On first message</SelectItem>
-                    <SelectItem value="show_interest">When they show interest</SelectItem>
-                    <SelectItem value="manual">Manual only</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-gray-500">
-                  {addTrigger === 'first_message' ? (
-                    "Contacts will be added to the sheet when they send their first message"
-                  ) : addTrigger === 'show_interest' ? (
-                    "Contacts will be added when AI detects they're showing interest in your products/services"
-                  ) : (
-                    "Contacts will only be added manually (through test or API calls)"
-                  )}
-                </p>
+              <div>
+                 <Label htmlFor="addTriggerSelect">When to Add/Update Row</Label>
+                 <Select 
+                   value={addTrigger} 
+                   onValueChange={(value) => setAddTrigger(value as 'first_message' | 'Interest Detected' | 'manual')}
+                 >
+                   <SelectTrigger id="addTriggerSelect">
+                     <SelectValue placeholder="Select when to add..." />
+                   </SelectTrigger>
+                   <SelectContent>
+                     <SelectItem value="first_message">On First Message</SelectItem>
+                     <SelectItem value="Interest Detected">When Interest is Detected</SelectItem>
+                     <SelectItem value="manual">Manually Only</SelectItem>
+                   </SelectContent>
+                 </Select>
+                 <p className="text-sm text-muted-foreground mt-1">
+                   {
+                     ({
+                       'first_message': 'Adds the contact only the first time they message.',
+                       'Interest Detected': 'Adds/updates when AI detects buying interest (keywords recommended).',
+                       'manual': 'Only adds contacts manually, no automatic processing.'
+                     })[addTrigger]
+                   }
+                 </p>
               </div>
-              
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="auto-update" className="flex-1">Auto-update fields</Label>
-                  <Switch 
-                    id="auto-update"
-                    checked={autoUpdateFields}
-                    onCheckedChange={setAutoUpdateFields}
-                  />
-                </div>
-                <p className="text-xs text-gray-500">
-                  When enabled, the system will update existing rows with new information detected in messages
-                </p>
+              {/* Auto Update Toggle */}
+              <div className="flex items-center space-x-2">
+                 <Switch 
+                   id="autoUpdateSwitch"
+                   checked={autoUpdateFields}
+                   onCheckedChange={setAutoUpdateFields}
+                 />
+                 <Label htmlFor="autoUpdateSwitch">Auto-update fields on subsequent messages</Label>
               </div>
             </div>
+
+            {/* Keywords Input (Conditional & Using ReactTags) */}
+            {addTrigger === 'Interest Detected' && (
+              <div className="react-tags-wrapper">
+                <Label htmlFor="interestKeywords">Interest Keywords (Optional)</Label>
+                 <ReactTags
+                   tags={interestKeywordsTags}
+                   handleDelete={handleKeywordDelete}
+                   handleAddition={handleKeywordAddition}
+                   handleDrag={handleKeywordDrag}
+                   placeholder="Add keywords (e.g., price, quote)"
+                   inputFieldPosition="top"
+                   autocomplete
+                   allowDragDrop
+                   delimiters={[188, 13]} // Comma, Enter
+                   classNames={{
+                     tags: 'tagsContainer',
+                     tagInput: 'tagInput',
+                     tagInputField: 'tagInputField',
+                     selected: 'selectedTags',
+                     tag: 'tagItem',
+                     remove: 'tagRemoveButton',
+                     suggestions: 'tagSuggestions',
+                     activeSuggestion: 'activeSuggestion'
+                   }}
+                 />
+                <p className="text-sm text-muted-foreground mt-2">
+                  Keywords help the AI identify messages showing buying interest. Press Enter or type a comma to add a keyword.
+                </p>
+              </div>
+            )}
 
             {/* Columns configuration */}
             <div className="space-y-4">

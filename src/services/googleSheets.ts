@@ -22,8 +22,9 @@ export interface SheetConfig {
   columns: SheetColumn[];
   active: boolean;
   lastUpdated: number;
-  addTrigger?: 'first_message' | 'show_interest' | 'manual';
+  addTrigger?: 'first_message' | 'Interest Detected' | 'manual';
   autoUpdateFields?: boolean;
+  interestKeywords?: string[];
 }
 
 // Helper function to create Auth header with Bearer prefix
