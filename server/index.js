@@ -79,6 +79,10 @@ console.log('[DEBUG] index.js: Attempting to require aiRoutes...');
 const aiRoutes = require('./routes/aiRoutes');
 console.log('[DEBUG] index.js: aiRoutes required successfully.');
 
+console.log('[DEBUG] index.js: Attempting to require whatsappRoutes...');
+const whatsappRoutes = require('./routes/whatsappRoutes');
+console.log('[DEBUG] index.js: whatsappRoutes required successfully.');
+
 console.log('[DEBUG] index.js: Attempting to require logger...');
 const logger = require('./utils/logger');
 console.log('[DEBUG] index.js: logger required successfully.');
@@ -387,6 +391,9 @@ app.use('/google-sheets', googleSheetsRoutes);
 
 // AI routes
 app.use('/api/ai', aiRoutes);
+
+// WhatsApp routes
+app.use('/api/whatsapp', whatsappRoutes);
 
 // Explicitly define a 404 handler for API routes to give better errors
 app.use('/api/*', (req, res) => {

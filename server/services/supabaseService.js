@@ -142,114 +142,77 @@ const fetchUserConfig = async (userId) => {
  */
 const saveEmbedding = async (userId, content, embedding, type, metadata = {}) => {
   try {
-    logger.debug('Saving embedding to Supabase', { userId, type });
-    
-    // Generate hash of content to use as a unique identifier
-    const contentHash = require('crypto')
-      .createHash('md5')
-      .update(content)
-      .digest('hex');
-    
-    // Check if embedding already exists
-    const existingEmbedding = await getEmbedding(userId, contentHash);
-    
-    let response;
-    
-    if (existingEmbedding) {
-      // Update existing embedding
-      response = await makeRequest({
-        url: `${SUPABASE_URL}/rest/v1/user_embeddings`,
-        method: 'PATCH',
-        service: 'supabase',
-        data: {
-          content,
-          embedding,
-          metadata,
-          updated_at: new Date().toISOString()
-        },
-        headers: {
-          'Prefer': 'return=minimal'
-        },
-        params: {
-          id: `eq.${existingEmbedding.id}`
-        }
-      });
-      
-      logger.info('Updated embedding in Supabase', { 
-        userId, 
-        embeddingId: existingEmbedding.id
-      });
-      
-      return { id: existingEmbedding.id, updated: true };
-    } else {
-      // Create new embedding
-      response = await makeRequest({
-        url: `${SUPABASE_URL}/rest/v1/user_embeddings`,
-        method: 'POST',
-        service: 'supabase',
-        data: {
-          user_id: userId,
-          content,
-          content_hash: contentHash,
-          embedding,
-          embedding_type: type,
-          metadata,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        },
-        headers: {
-          'Prefer': 'return=representation'
-        }
-      });
-      
-      logger.info('Created new embedding in Supabase', { 
-        userId,
-        embeddingId: response.id 
-      });
-      
-      return { id: response.id, created: true };
-    }
-  } catch (error) {
-    logger.error('Error saving embedding to Supabase', {
-      userId,
-      type,
-      error: error.message
-    });
-    throw new Error(`Failed to save embedding: ${error.message}`);
-  }
-};
+    logger.debug(`Saving embedding for user: ${userId}, type: ${type}`);
 
-/**
- * Get an embedding by content hash
- * @param {string} userId - Firebase user ID
- * @param {string} contentHash - Hash of the content
- * @returns {Promise<Object|null>} Embedding or null if not found
- */
-const getEmbedding = async (userId, contentHash) => {
-  try {
+    // Step 1: Delete existing embeddings for this user and type
+    try {
+      logger.debug(`Attempting to delete existing embedding for user: ${userId}, type: ${type}`);
+      await makeRequest({
+        url: `${SUPABASE_URL}/rest/v1/user_embeddings`,
+        method: 'DELETE',
+        service: 'supabase',
+        params: {
+          user_id: `eq.${userId}`,
+          embedding_type: `eq.${type}`
+        },
+        headers: {
+          // Prefer minimal ensures we don't get the deleted data back, slightly more efficient
+          'Prefer': 'return=minimal' 
+        }
+      });
+      logger.info(`Successfully deleted any existing embedding for user: ${userId}, type: ${type}`);
+    } catch (deleteError) {
+       // Log the error but proceed, as the INSERT might still be valid (e.g., if delete fails because nothing exists)
+       // Supabase might return 404 or other errors if the filter doesn't match, which isn't critical here.
+       // Critical errors (like auth) would likely throw higher up or during INSERT.
+       logger.warn(`Warning during delete pre-check for embedding (user: ${userId}, type: ${type}): ${deleteError.message}`);
+       // We don't rethrow here, we still want to attempt the insert.
+    }
+
+    // Step 2: Insert the new embedding
+    logger.debug(`Inserting new embedding for user: ${userId}, type: ${type}`);
     const response = await makeRequest({
       url: `${SUPABASE_URL}/rest/v1/user_embeddings`,
-      method: 'GET',
+      method: 'POST',
       service: 'supabase',
-      params: {
-        user_id: `eq.${userId}`,
-        content_hash: `eq.${contentHash}`,
-        select: '*'
+      data: {
+        user_id: userId,
+        content,
+        embedding,
+        embedding_type: type,
+        metadata,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      headers: {
+        'Prefer': 'return=representation' // Request the inserted row back
       }
     });
     
-    if (Array.isArray(response) && response.length > 0) {
-      return response[0];
+    // Ensure response is valid and has an ID
+    if (!response || !response.id) {
+      logger.error('Failed to create embedding or invalid response received after insert', { userId, type, response });
+      throw new Error('Failed to create embedding: Invalid response from Supabase after insert');
     }
-    
-    return null;
-  } catch (error) {
-    logger.error('Error getting embedding from Supabase', {
+      
+    logger.info('Successfully inserted new embedding in Supabase', { 
       userId,
-      contentHash,
-      error: error.message
+      type,
+      embeddingId: response.id 
     });
-    throw new Error(`Failed to get embedding: ${error.message}`);
+    
+    // Return the ID of the newly created embedding
+    return { id: response.id, created: true };
+
+  } catch (error) {
+    logger.error('Error in saveEmbedding process', {
+      userId,
+      type,
+      errorMessage: error.message,
+      errorDetails: error.response?.data || error.details || error.stack
+    });
+    // Rethrow a generic error message for the client
+    throw new Error(`Failed to save embedding: ${error.message}`); 
   }
 };
 
@@ -299,6 +262,5 @@ module.exports = {
   saveUserConfig,
   fetchUserConfig,
   saveEmbedding,
-  getEmbedding,
   matchDocuments
 }; 

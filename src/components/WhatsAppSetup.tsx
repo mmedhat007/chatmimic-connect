@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { doc, updateDoc, getDoc, setDoc, collection, addDoc } from 'firebase/firestore';
 import { db, getCurrentUser } from '../services/firebase';
 import { useNavigate } from 'react-router-dom';
+import { apiRequest } from '../utils/api';
 
 interface WhatsAppCredentials {
   access_token: string;
@@ -19,46 +20,31 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
   const navigate = useNavigate();
 
   const validateCredentials = async (creds: WhatsAppCredentials): Promise<boolean> => {
+    setError('');
     try {
-      // Test the WhatsApp API with the provided credentials by sending a message to a test number
-      const response = await fetch(`https://graph.facebook.com/v17.0/${creds.phone_number_id}/messages`, {
+      console.log('[WhatsAppSetup] Calling backend to validate credentials...');
+      const response = await apiRequest('/api/whatsapp/validate-credentials', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${creds.access_token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
-          to: "201103343450",
-          type: "text",
-          text: { 
-            body: "WhatsApp credentials validation test from DenoteAI" 
-          }
-        })
+          access_token: creds.access_token,
+          phone_number_id: creds.phone_number_id
+        }),
       });
 
-      const data = await response.json();
-      
-      // If we get a message id back, the credentials are valid
-      if (data.messages && data.messages[0]?.id) {
-        return true;
-      }
+      console.log('[WhatsAppSetup] Backend validation response:', response);
 
-      // If we get an auth error, credentials are invalid
-      if (data.error?.type === 'OAuthException') {
-        setError('Invalid credentials. Please check your access token and phone number ID.');
+      if (response && response.status === 'success' && response.data?.isValid === true) {
+        console.log('[WhatsAppSetup] Credentials validated successfully by backend.');
+        return true;
+      } else {
+        setError(response?.message || 'Invalid credentials according to backend.');
         return false;
       }
-
-      // If we get here, something else is wrong
-      setError('Could not verify WhatsApp credentials. Please check your phone number ID and access token.');
-      console.error('WhatsApp API response:', data);
-      return false;
-    } catch (error) {
-      console.error('Error validating credentials:', error);
-      setError('Failed to validate credentials. Please try again.');
-      return false;
+    } catch (apiError: any) {
+        console.error('[WhatsAppSetup] Error calling backend validation API:', apiError);
+        const message = apiError?.message || 'Failed to contact server for validation. Please check your connection and try again.';
+        setError(message);
+        return false;
     }
   };
 
@@ -67,7 +53,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
     setError('');
 
     try {
-      // Validate credentials
       const isValid = await validateCredentials(credentials);
       if (!isValid) {
         setIsLoading(false);
@@ -80,7 +65,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         return;
       }
 
-      // Update user document with WhatsApp credentials and workflow
       const userRef = doc(db, 'Users', userUID);
       const userDoc = await getDoc(userRef);
       
@@ -89,7 +73,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         return;
       }
 
-      // Update credentials and workflow in Users collection
       await updateDoc(userRef, {
         'credentials.whatsappCredentials': {
           access_token: credentials.access_token,
@@ -98,13 +81,12 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         'workflows.whatsapp_agent': {
           executions_used: 0,
           limit: 1000,
-          reset_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
-          paid: false, // Initialize as unpaid
-          setup_completed: false // Track whether AI agent setup is completed
+          reset_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          paid: false,
+          setup_completed: false
         }
       });
 
-      // Create WhatsApp_Data document with initial structure
       const whatsappDataRef = doc(db, 'Whatsapp_Data', userUID);
       await setDoc(whatsappDataRef, {
         client_number: credentials.phone_number_id,
@@ -127,7 +109,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         }
       }, { merge: true });
 
-      // Create initial chats collection with a placeholder document
       const chatsCollectionRef = collection(db, 'Whatsapp_Data', userUID, 'chats');
       const placeholderChatRef = doc(chatsCollectionRef, 'system');
       const currentTime = new Date();
@@ -143,7 +124,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         tags: ['system']
       });
 
-      // Create initial message in the messages subcollection
       const messagesCollectionRef = collection(placeholderChatRef, 'messages');
       await addDoc(messagesCollectionRef, {
         message: 'WhatsApp integration setup complete. You can now start receiving and sending messages.',
@@ -152,7 +132,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         date: currentTime.toLocaleDateString()
       });
 
-      // Create initial templates collection with a placeholder document
       const templatesCollectionRef = collection(db, 'Whatsapp_Data', userUID, 'templates');
       const welcomeTemplateRef = doc(templatesCollectionRef, 'welcome');
       await setDoc(welcomeTemplateRef, {
@@ -163,7 +142,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         type: 'auto_reply'
       });
 
-      // Store WhatsApp config in localStorage to avoid future redirects
       const whatsAppConfig = {
         setup_completed: true,
         phone_number_id: credentials.phone_number_id,
@@ -171,12 +149,11 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
       };
       localStorage.setItem(`user_${userUID}_whatsapp_config`, JSON.stringify(whatsAppConfig));
 
-      // Change navigation to agent-setup page after setup
       navigate('/agent-setup');
       onComplete();
     } catch (error) {
       console.error('Error in setup:', error);
-      setError('Failed to complete setup. Please try again.');
+      setError(`Failed to complete setup: ${error instanceof Error ? error.message : 'Unknown database error'}`);
     } finally {
       setIsLoading(false);
     }
@@ -186,7 +163,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
     <div className="max-w-2xl mx-auto p-6 bg-white rounded-lg shadow-lg">
       <h2 className="text-2xl font-bold mb-6">WhatsApp Setup Guide</h2>
 
-      {/* Step 1: Create Meta App */}
       <div className={`mb-8 ${step !== 1 && 'opacity-50'}`}>
         <h3 className="text-lg font-semibold mb-2">Step 1: Create Meta App</h3>
         <ol className="list-decimal pl-5 space-y-2">
@@ -206,7 +182,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         </button>
       </div>
 
-      {/* Step 2: Add WhatsApp */}
       <div className={`mb-8 ${step !== 2 && 'opacity-50'}`}>
         <h3 className="text-lg font-semibold mb-2">Step 2: Add WhatsApp Product</h3>
         <ol className="list-decimal pl-5 space-y-2">
@@ -224,7 +199,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         </button>
       </div>
 
-      {/* Step 3: Configure Webhook */}
       <div className={`mb-8 ${step !== 3 && 'opacity-50'}`}>
         <h3 className="text-lg font-semibold mb-2">Step 3: Configure Webhook</h3>
         <ol className="list-decimal pl-5 space-y-2">
@@ -247,7 +221,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         </button>
       </div>
 
-      {/* Step 4: Phone Number Setup */}
       <div className={`mb-8 ${step !== 4 && 'opacity-50'}`}>
         <h3 className="text-lg font-semibold mb-2">Step 4: API Setup & Phone Number</h3>
         <ol className="list-decimal pl-5 space-y-2">
@@ -274,7 +247,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
         </button>
       </div>
 
-      {/* Step 5: Enter Credentials */}
       <div className={`mb-8 ${step !== 5 && 'opacity-50'}`}>
         <h3 className="text-lg font-semibold mb-2">Step 5: Enter Your Credentials</h3>
         <div className="space-y-4">
@@ -307,7 +279,6 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
             </div>
           )}
 
-          {/* Pricing Information */}
           <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <h4 className="font-semibold text-blue-800 mb-2">Basic Plan Details</h4>
             <ul className="text-sm text-blue-700 space-y-1">
@@ -323,7 +294,7 @@ const WhatsAppSetup = ({ onComplete }: { onComplete: () => void }) => {
             disabled={isLoading || step !== 5}
             className="w-full mt-6 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isLoading ? 'Setting up...' : 'Complete Setup'}
+            {isLoading ? 'Validating & Setting up...' : 'Complete Setup'}
           </button>
         </div>
       </div>

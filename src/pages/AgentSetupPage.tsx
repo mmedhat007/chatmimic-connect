@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, AlertTriangle } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getCurrentUser } from '../services/firebase';
+import { getAuth, onAuthStateChanged, User } from 'firebase/auth';
 import NavSidebar from '../components/NavSidebar';
-import axios from 'axios';
+import { apiRequest } from '../utils/api';
 import { saveUserConfig, createEmbeddings, checkEmbeddingsAvailable, getUserConfig } from '../services/supabase';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../services/supabase';
@@ -104,48 +104,43 @@ interface BusinessInfo {
 // Function to generate industry-specific structure
 const generateIndustryStructure = async (industry: string): Promise<any> => {
   try {
-    // Use the proxy endpoint instead of directly calling OpenAI
-    const response = await fetch('/api/proxy', {
+    // Use apiRequest with the specific proxy path
+    const response = await apiRequest('/api/proxy/openai/chat/completions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-      },
       body: JSON.stringify({
-        service: 'openai',
-        endpoint: 'https://api.openai.com/v1/chat/completions',
-        method: 'POST',
-        data: {
+        data: { 
           model: "gpt-4o-mini",
           messages: [
-            {
-              role: "system",
-              content: `You are an AI expert in business operations. Generate a minimal set of essential information points for a WhatsApp AI agent. Focus only on the most important aspects that customers typically ask about.`
-            },
-            {
-              role: "user",
-              content: `Generate a simple JSON structure for a ${industry} business with only the most essential fields:
-              {
-                "data_fields": { top 3 most important fields only },
-                "customer_queries": [ top 3 most common questions ],
-                "operations": { top 2 key operations },
-                "compliance": [ only if legally required ]
-              }`
-            }
+             {
+               role: "system",
+               content: `You are an AI expert in business operations. Generate a minimal set of essential information points for a WhatsApp AI agent. Focus only on the most important aspects that customers typically ask about.`
+             },
+             {
+               role: "user",
+               content: `Generate a simple JSON structure for a ${industry} business with only the most essential fields:
+               {
+                 "data_fields": { top 3 most important fields only },
+                 "customer_queries": [ top 3 most common questions ],
+                 "operations": { top 2 key operations },
+                 "compliance": [ only if legally required ]
+               }`
+             }
           ],
           temperature: 0.7
         }
       })
     });
 
-    if (!response.ok) {
-      throw new Error(`Server responded with status: ${response.status}`);
+    // Access the OpenAI choice from the nested structure 
+    const messageContent = response?.data?.choices?.[0]?.message?.content;
+    if (!messageContent) {
+      throw new Error('Invalid response structure received from proxy');
     }
+    return JSON.parse(messageContent);
 
-    const result = await response.json();
-    return JSON.parse(result.data.choices[0].message.content);
   } catch (error) {
-    console.error('Error generating industry structure:', error);
+    console.error('Error generating industry structure via proxy:', error);
+    toast.error('Failed to generate industry-specific suggestions.');
     return null;
   }
 };
@@ -211,10 +206,15 @@ const AgentSetupPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [setupComplete, setSetupComplete] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const userUID = getCurrentUser() || 'test_user_123';
   const navigate = useNavigate();
   const location = useLocation();
   
+  // --- Authentication State --- 
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true); // Track initial auth check
+  const [userUID, setUserUID] = useState<string | null>(null);
+  // --------------------------
+
   // Track industry structure
   const [industryStructure, setIndustryStructure] = useState<any>(null);
   const [embeddingsAvailable, setEmbeddingsAvailable] = useState<boolean | null>(null);
@@ -341,6 +341,29 @@ const AgentSetupPage = () => {
     behavior_rules: []
   });
 
+  // --- Effect for Firebase Auth --- 
+  useEffect(() => {
+    const auth = getAuth();
+    // Listen for auth state changes
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log('[AgentSetupPage Auth Listener] Auth state changed:', user ? `User UID: ${user.uid}` : 'No User');
+      if (user) {
+        setAuthUser(user);
+        setUserUID(user.uid); 
+      } else {
+        setAuthUser(null);
+        setUserUID(null);
+        // Optional: Redirect to login if user becomes null unexpectedly
+        // navigate('/login'); 
+      }
+      setAuthLoading(false); // Mark auth check as complete
+    });
+
+    // Cleanup listener on component unmount
+    return () => unsubscribe();
+  }, [navigate]); // Add navigate dependency if using it inside
+  // ------------------------------
+
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -353,36 +376,38 @@ const AgentSetupPage = () => {
     }
   }, [setupComplete, navigate]);
 
-  // Log user ID when component mounts
+  // Check if embeddings are available - ONLY RUN WHEN AUTH IS READY
   useEffect(() => {
-    console.log("AgentSetupPage - Current User UID:", userUID);
-    if (!userUID) {
-      console.warn("No user ID found. User may not be logged in.");
+    // Wait for auth check to complete and ensure user is logged in
+    if (!authLoading && authUser) {
+      console.log('[AgentSetupPage] Auth ready, checking embeddings availability...');
+      const checkEmbeddings = async () => {
+        const available = await checkEmbeddingsAvailable();
+        setEmbeddingsAvailable(available);
+        
+        if (!available) {
+          toast(
+            "OpenAI embeddings check failed or API key is missing. Some search features may be limited.",
+            { 
+              duration: 6000,
+              icon: '⚠️'
+            }
+          );
+        }
+      };
+      checkEmbeddings();
+    } else if (!authLoading && !authUser) {
+       console.warn('[AgentSetupPage] Cannot check embeddings: No authenticated user.');
+    } else {
+       console.debug('[AgentSetupPage] Waiting for auth state before checking embeddings...');
     }
-  }, [userUID]);
-
-  // Check if embeddings are available
-  useEffect(() => {
-    const checkEmbeddings = async () => {
-      const available = await checkEmbeddingsAvailable();
-      setEmbeddingsAvailable(available);
-      
-      if (!available) {
-        toast(
-          "OpenAI embeddings are not available. The app will still work, but some search features may be limited.",
-          { 
-            duration: 6000,
-            icon: '⚠️'
-          }
-        );
-      }
-    };
-    
-    checkEmbeddings();
-  }, []);
+  }, [authLoading, authUser]); // Rerun when auth state changes
 
   const handleSendMessage = async () => {
-    if (!newMessage.trim() || isLoading || !userUID) return;
+    if (!newMessage.trim() || isLoading || !authUser || !userUID) {
+       if (!authUser) toast.error('Please log in again to continue setup.');
+       return;
+    }
 
     const userMessage: Message = {
       id: `user-${Date.now().toString()}`,
@@ -396,35 +421,31 @@ const AgentSetupPage = () => {
     setIsLoading(true);
 
     try {
-      // Update the conversation history
       const updatedHistory = [
         ...conversationHistory,
         { role: "user", content: userMessage.text }
       ];
       setConversationHistory(updatedHistory);
 
-      // Call OpenAI API for chat completion
-      const response = await axios.post(
-        '/api/proxy',
-        {
-          service: 'openai',
-          endpoint: 'https://api.openai.com/v1/chat/completions',
-          method: 'POST',
-          data: {
+      // Call specific backend proxy endpoint using apiRequest
+      const response = await apiRequest('/api/proxy/openai/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({
+           data: { 
             model: "gpt-4o-mini",
             messages: updatedHistory,
             temperature: 0.7
-          }
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-          }
-        }
-      );
+           }
+        })
+      });
 
-      const botResponse = response.data.choices[0].message.content;
+      // Access the actual OpenAI response data
+      const botResponse = response?.data?.choices?.[0]?.message?.content;
+
+      if (!botResponse) {
+         console.error("Invalid response structure from proxy/OpenAI:", response);
+         throw new Error("Received an invalid response from the AI service.");
+      }
       
       // Update conversation history with bot's response
       setConversationHistory(prev => [...prev, { role: "assistant", content: botResponse }]);
@@ -534,10 +555,11 @@ const AgentSetupPage = () => {
     } catch (error) {
       console.error("Error processing message:", error);
       
+      const errorMessageText = error instanceof Error ? error.message : "Sorry, I encountered an error. Please try again or contact support.";
       // Add an error message
       const errorMessage: Message = {
         id: `error-${Date.now().toString()}`,
-        text: "Sorry, I encountered an error. Please try again or contact support.",
+        text: errorMessageText,
         sender: 'bot',
         timestamp: new Date()
       };
@@ -548,12 +570,13 @@ const AgentSetupPage = () => {
     }
   };
 
-  // Save to Supabase
+  // Save to Supabase - Ensure UID is passed correctly
   const saveToSupabase = async (uid: string, config: any) => {
-    console.log('Starting Supabase save with UID:', uid);
+    console.log('Starting Supabase save with provided UID:', uid);
     
     if (!uid) {
       console.error('No UID provided to save function');
+      toast.error('User ID missing, cannot save configuration.');
       return false;
     }
     
@@ -576,74 +599,72 @@ const AgentSetupPage = () => {
       localStorage.setItem(`user_${uid}_config`, JSON.stringify(config));
       console.log('Saved full config to localStorage');
       
-      // Only attempt to create embeddings if they're available
-      if (embeddingsAvailable) {
-        try {
-          // Create embeddings for different sections with metadata
-          // Company info embeddings
-          await createEmbeddings(
-            uid, 
-            JSON.stringify(config.company_info), 
-            'company_info',
-            { section: 'company_info', type: 'configuration' }
-          );
-          
-          // Services embeddings
-          await createEmbeddings(
-            uid,
-            JSON.stringify(config.services),
-            'services',
-            { section: 'services', type: 'configuration' }
-          );
-          
-          // Communication style embeddings
-          await createEmbeddings(
-            uid,
-            JSON.stringify(config.communication_style),
-            'communication_style',
-            { section: 'communication_style', type: 'configuration' }
-          );
-          
-          // Business processes embeddings
-          await createEmbeddings(
-            uid,
-            JSON.stringify(config.business_processes),
-            'business_processes',
-            { section: 'business_processes', type: 'configuration' }
-          );
-          
-          // Behavior rules embeddings
-          if (config.behavior_rules && config.behavior_rules.length > 0) {
-            console.log('Creating embeddings for behavior rules:', config.behavior_rules);
+      // The check for authUser happens before calling createEmbeddings
+      // Check embeddingsAvailable state (which depends on the auth-guarded useEffect)
+      if (embeddingsAvailable && authUser) { // Check authUser again just in case
+         console.log('[AgentSetupPage] Auth confirmed, proceeding with embeddings creation...');
+         try {
+            // Pass the confirmed uid to createEmbeddings
+            // apiRequest inside createEmbeddings will use the latest token
+            await createEmbeddings(
+               uid, // Use the passed UID
+               JSON.stringify(config.company_info), 
+               'company_info',
+               { section: 'company_info', type: 'configuration' }
+             );
+            
             await createEmbeddings(
               uid,
-              JSON.stringify(config.behavior_rules),
-              'behavior_rules',
-              { section: 'behavior_rules', type: 'configuration' }
+              JSON.stringify(config.services),
+              'services',
+              { section: 'services', type: 'configuration' }
             );
+            
+            await createEmbeddings(
+              uid,
+              JSON.stringify(config.communication_style),
+              'communication_style',
+              { section: 'communication_style', type: 'configuration' }
+            );
+            
+            await createEmbeddings(
+              uid,
+              JSON.stringify(config.business_processes),
+              'business_processes',
+              { section: 'business_processes', type: 'configuration' }
+            );
+            
+            if (config.behavior_rules && config.behavior_rules.length > 0) {
+              console.log('Creating embeddings for behavior rules:', config.behavior_rules);
+              await createEmbeddings(
+                uid,
+                JSON.stringify(config.behavior_rules),
+                'behavior_rules',
+                { section: 'behavior_rules', type: 'configuration' }
+              );
+            }
+            
+            await createEmbeddings(
+              uid,
+              JSON.stringify(config),
+              'complete_config',
+              { section: 'complete', type: 'configuration' }
+            );
+            
+            console.log('Successfully created embeddings');
+          } catch (embeddingError) {
+             console.error('Error creating embeddings:', embeddingError);
+             toast.error('Failed to save embeddings. Configuration saved without embeddings.');
           }
-          
-          // Complete config embeddings
-          await createEmbeddings(
-            uid,
-            JSON.stringify(config),
-            'complete_config',
-            { section: 'complete', type: 'configuration' }
-          );
-          
-          console.log('Successfully created embeddings');
-        } catch (embeddingError) {
-          console.error('Error creating embeddings:', embeddingError);
-          // Continue anyway, as embeddings are not critical for core functionality
-        }
       } else {
-        console.warn('Skipping embeddings creation as they are not available');
+         console.warn('[AgentSetupPage] Skipping embeddings creation: Embeddings not available or user not authenticated.');
       }
-      
+       
       return true;
     } catch (error) {
-      console.error('Error in Supabase save function:', error);
-      return false;
+       console.error('Error in Supabase save function:', error);
+       toast.error('Failed to save configuration.');
+       return false;
     }
   };
 
@@ -655,6 +676,27 @@ const AgentSetupPage = () => {
     navigate('/google-sheets');
   };
 
+  // --- Render Logic --- 
+  // Optional: Show loading state while auth is checked
+  if (authLoading) {
+     return (
+         <div className="flex h-screen items-center justify-center">
+             <p>Loading authentication...</p>
+             {/* Or a spinner component */}
+         </div>
+     );
+  }
+  
+  // Optional: Show message if user is not logged in
+  if (!authUser) {
+     return (
+         <div className="flex h-screen items-center justify-center">
+             <p>Authentication required. Please <a href="/login" className="underline">log in</a>.</p>
+         </div>
+     );
+  }
+
+  // Main component return JSX
   return (
     <div className="flex h-screen bg-gray-50">
       <NavSidebar />

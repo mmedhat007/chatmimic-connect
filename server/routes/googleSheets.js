@@ -206,13 +206,24 @@ router.get('/test-connection', requireAuth, async (req, res) => {
 
   } catch (error) {
     logger.logError(error, req, 'Error testing Google Sheets connection');
-    // ADDED: Check for auth errors
+    
     const errorMessage = error.message || '';
+
+    // Specific check for "No Credentials" case - return 200 OK
+    if (errorMessage.includes('No Google credentials found for user')) {
+        logger.info(`User ${req.user?.uid || 'unknown'} tested connection but has no Google credentials.`);
+        return res.json({ 
+            status: 'success', 
+            data: { connected: false } 
+        });
+    }
+
+    // Check for actual authentication errors - return 401 Unauthorized
     if (
         (error.response && (error.response.status === 401 || error.response.status === 403)) ||
-        errorMessage.includes('No valid Google credentials') ||
         errorMessage.includes('invalid or revoked') ||
-        errorMessage.includes('Authentication failed')
+        errorMessage.includes('Authentication failed') ||
+        errorMessage.includes('Google refresh token is invalid or revoked') // Added specific refresh token error
     ) {
         return res.status(401).json({
             status: 'error',
@@ -220,7 +231,8 @@ router.get('/test-connection', requireAuth, async (req, res) => {
             error: errorMessage, 
         });
     }
-    // Fallback for other errors
+    
+    // Fallback for other unexpected errors - return 500 Internal Server Error
     return res.status(500).json({
       status: 'error',
       message: 'Failed to test Google Sheets connection',

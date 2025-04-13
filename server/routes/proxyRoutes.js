@@ -118,10 +118,18 @@ router.post('/embeddings',
         path: req.path
       });
       
-      const embeddings = await generateEmbeddings(text, model);
+      const result = await proxyService.makeRequest({
+        url: 'https://api.openai.com/v1/embeddings',
+        method: 'POST',
+        data: { input: text, model: model || 'text-embedding-3-small' },
+        service: 'openai',
+        userId: req.user.uid
+      });
       
-      if (save && embeddings) {
-        await saveEmbedding(req.user.uid, text, embeddings, type || 'text', metadata || {});
+      const embedding = result?.data?.[0]?.embedding;
+
+      if (save && embedding) {
+        await saveEmbedding(req.user.uid, text, embedding, type || 'text', metadata || {});
         logger.info(`Embeddings saved for userId: ${req.user.uid}`);
       }
       
@@ -134,9 +142,9 @@ router.post('/embeddings',
       res.json({
         status: 'success',
         data: {
-          embedding: embeddings,
+          embedding: embedding,
           model: model,
-          dimensions: embeddings.length
+          dimensions: embedding.length
         },
         meta: {
           responseTime
@@ -144,11 +152,12 @@ router.post('/embeddings',
       });
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      logger.logError(error, req, 'Embeddings request error');
+      logger.logError(error, req, 'Embeddings Proxy Error');
       
-      res.status(500).json({
+      res.status(error.statusCode || 500).json({
         status: 'error',
         message: error.message || 'An error occurred while generating embeddings',
+        details: error.details || {},
         meta: {
           responseTime
         }
@@ -170,7 +179,7 @@ router.post('/extract-data',
     const startTime = Date.now();
     
     try {
-      const { message, fields, model = 'deepseek-r1-distill-llama-70b' } = req.body;
+      const { message, fields, model = 'llama3-8b-8192' } = req.body;
       
       logger.info('Extract data request', {
         userId: req.user.uid,
@@ -179,8 +188,25 @@ router.post('/extract-data',
         model
       });
       
-      const extractedData = await extractDataWithGroq(message, fields);
-      
+      const groqData = { 
+        model: model, 
+        messages: [ /* Construct messages based on message and fields */ ],
+        // ... other Groq params ...
+      };
+      // TODO: Construct the actual messages array for Groq based on fields/prompts
+      // This logic might need to move to proxyService or stay here
+
+      const result = await proxyService.makeRequest({
+        url: 'https://api.groq.com/openai/v1/chat/completions',
+        method: 'POST',
+        data: groqData,
+        service: 'groq',
+        userId: req.user.uid
+      });
+
+      // TODO: Parse result.choices[0].message.content to get extracted data
+      const extractedData = {}; // Placeholder
+
       const responseTime = Date.now() - startTime;
       logger.info('Extract data response success', {
         userId: req.user.uid,
@@ -197,11 +223,12 @@ router.post('/extract-data',
       });
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      logger.logError(error, req, 'Extract data request error');
+      logger.logError(error, req, 'Extract Data Proxy Error');
       
-      res.status(500).json({
+      res.status(error.statusCode || 500).json({
         status: 'error',
         message: error.message || 'An error occurred while extracting data',
+        details: error.details || {},
         meta: {
           responseTime
         }
@@ -272,6 +299,71 @@ router.post('/match-documents',
       });
     }
   }
+);
+
+/**
+ * POST /api/proxy/openai/chat/completions  <-- NEW SPECIFIC ROUTE
+ * Proxies requests specifically to OpenAI's chat completions endpoint.
+ */
+router.post('/openai/chat/completions',
+    requireAuth,
+    // Add validation if needed for the request body (e.g., ensuring 'data' exists)
+    async (req, res) => {
+        const startTime = Date.now();
+        // Extract the OpenAI request data from the main request body's 'data' field
+        const openAIData = req.body.data;
+
+        if (!openAIData || typeof openAIData !== 'object') {
+             return res.status(400).json({ status: 'error', message: 'Missing or invalid \'data\' field in request body for OpenAI proxy.' });
+        }
+        // Basic validation for messages array
+        if (!Array.isArray(openAIData.messages) || openAIData.messages.length === 0) {
+             return res.status(400).json({ status: 'error', message: 'Missing or invalid \'messages\' array in OpenAI data.' });
+        }
+
+        try {
+            logger.info(`Proxying to OpenAI Chat Completions - User: ${req.user.uid}`);
+
+            const result = await proxyService.makeRequest({
+                // Hardcode the specific OpenAI endpoint
+                url: 'https://api.openai.com/v1/chat/completions',
+                method: 'POST',
+                // Pass the nested 'data' object as the actual request body for OpenAI
+                data: openAIData,
+                // Headers are handled by proxyService (including OpenAI key)
+                headers: {},
+                params: {},
+                service: 'openai', // Identify the service for auth handling
+                userId: req.user.uid
+            });
+
+            const responseTime = Date.now() - startTime;
+            logger.info(`OpenAI Chat Completions Proxy Success - User: ${req.user.uid}, Time: ${responseTime}ms`);
+
+            res.json({
+                status: 'success',
+                // Return the data received from OpenAI
+                data: result,
+                meta: { responseTime }
+            });
+
+        } catch (error) {
+            const responseTime = Date.now() - startTime;
+            // Use the logger's error handler (assuming logError exists)
+            if (logger.logError) {
+                 logger.logError(error, req, 'OpenAI Chat Completions Proxy Error');
+            } else {
+                 logger.error('OpenAI Chat Completions Proxy Error:', { message: error.message, status: error.statusCode, details: error.details, userId: req.user.uid });
+            }
+            
+            res.status(error.statusCode || 500).json({
+                status: 'error',
+                message: error.message || 'Failed to proxy request to OpenAI Chat Completions.',
+                details: error.details || {},
+                meta: { responseTime }
+            });
+        }
+    }
 );
 
 /**

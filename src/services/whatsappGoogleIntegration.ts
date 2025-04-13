@@ -59,10 +59,10 @@ export const processWhatsAppMessage = async (
 
       // Simulate the backend flow by calling the relevant API endpoints
       // 1. Extract Data using AI (via backend proxy)
-      const sheetConfigs = await getAllSheetConfigs();
-      const activeConfigs = sheetConfigs.filter(config => config.active);
-
-      if (activeConfigs.length === 0) {
+    const sheetConfigs = await getAllSheetConfigs();
+    const activeConfigs = sheetConfigs.filter(config => config.active);
+    
+    if (activeConfigs.length === 0) {
           console.log('[Test Button] No active sheet configurations found.');
           return false; // Or throw error?
       }
@@ -183,7 +183,7 @@ export const manuallyAddContactToSheet = async (contact: Contact, sheetConfig: S
 
     // Append the row via the backend API
     await appendSheetRow(sheetConfig.sheetId, rowData);
-
+    
     console.log(`[Manual Add] Successfully added contact ${contact.phoneNumber} to sheet ${sheetConfig.name}`);
 
   } catch (error) {

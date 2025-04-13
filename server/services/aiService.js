@@ -1,12 +1,14 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
 
-// Load API Key from server environment variables
+// Load API Keys from server environment variables
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY; // Add OpenAI key
 
 // Define models - SWAPPED: Llama 3.1 8b is now primary, Deepseek is fallback
 const MODEL_NAME = 'llama3-8b-8192';
 const FALLBACK_MODEL_NAME = 'deepseek-r1-distill-llama-70b';
+const OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'; // Default embedding model
 
 /**
  * Generates default AI prompts based on field types.
@@ -269,8 +271,60 @@ Respond with ONLY the word "true" if buying interest is detected, or ONLY the wo
   return false;
 };
 
-// Restore original export
+/**
+ * Generates embeddings for text using the OpenAI API.
+ * @param {string} text The text to embed.
+ * @param {string} [model=text-embedding-3-small] The OpenAI model to use.
+ * @returns {Promise<Array<number>>} The generated embedding vector.
+ */
+const generateEmbeddings = async (text, model = OPENAI_EMBEDDING_MODEL) => {
+  if (!OPENAI_API_KEY) {
+    logger.error('[AI Service - Embeddings] OPENAI_API_KEY is not configured.');
+    throw new Error('OpenAI API key not configured on server.');
+  }
+  if (!text || typeof text !== 'string') {
+    logger.error('[AI Service - Embeddings] Input text is missing or not a string.');
+    throw new Error('Input text is required to generate embeddings.');
+  }
+
+  logger.debug(`[AI Service - Embeddings] Generating embeddings for text (length: ${text.length}) using model: ${model}`);
+  try {
+    const response = await axios.post('https://api.openai.com/v1/embeddings', {
+      input: text.replace(/\n/g, ' '), // OpenAI recommends replacing newlines
+      model: model,
+    }, {
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response.data?.data?.[0]?.embedding) {
+       logger.info(`[AI Service - Embeddings] Successfully generated embeddings using ${model}.`);
+       return response.data.data[0].embedding;
+    } else {
+       logger.error('[AI Service - Embeddings] Invalid response structure from OpenAI API:', response.data);
+       throw new Error('Invalid response structure from OpenAI Embeddings API');
+    }
+  } catch (error) {
+     logger.error(`[AI Service - Embeddings] OpenAI API error: ${error.message}`);
+      if (error.response) {
+        logger.error(`[AI Service - Embeddings] OpenAI Error Status: ${error.response.status}`);
+        logger.error(`[AI Service - Embeddings] OpenAI Error Data: ${JSON.stringify(error.response.data)}`);
+        // Re-throw a potentially more specific error message from OpenAI if available
+        const errorMessage = error.response.data?.error?.message || error.message;
+         throw new Error(`Failed to generate embeddings: ${errorMessage}`);
+      } else {
+        // Network or other errors
+        throw new Error(`Failed to generate embeddings: ${error.message}`);
+      }
+  }
+};
+
+// Add generateEmbeddings back to the exports
+// Make sure the function itself is defined above!
 module.exports = {
   extractDataFromMessage,
-  checkInterest
+  checkInterest,
+  generateEmbeddings // Ensure this is included and NOT commented out
 };
