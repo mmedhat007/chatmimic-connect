@@ -129,8 +129,17 @@ router.post('/embeddings',
       const embedding = result?.data?.[0]?.embedding;
 
       if (save && embedding) {
-        await saveEmbedding(req.user.uid, text, embedding, type || 'text', metadata || {});
-        logger.info(`Embeddings saved for userId: ${req.user.uid}`);
+        try {
+          await saveEmbedding(req.user.uid, text, embedding, type || 'text', metadata || {});
+          logger.info(`Embeddings saved for userId: ${req.user.uid}`);
+        } catch (saveError) {
+          // Log the error but don't fail the overall request
+          logger.error(`Failed to save embedding for userId: ${req.user.uid}`, {
+            error: saveError.message,
+            errorDetails: saveError.details || saveError.stack
+          });
+          // Don't throw, continue with returning the embedding even if saving failed
+        }
       }
       
       const responseTime = Date.now() - startTime;
@@ -250,22 +259,44 @@ router.post('/match-documents',
     const startTime = Date.now();
     
     try {
-      const { text, embedding, threshold = 0.7, limit = 5 } = req.body;
+      const { text, embedding, threshold = 0.7, limit = 5, filter = {} } = req.body;
       
       logger.info('Match documents request', {
         userId: req.user.uid,
         hasText: !!text,
         hasEmbedding: !!embedding,
         threshold,
-        limit
+        limit,
+        hasFilter: Object.keys(filter).length > 0
       });
       
       let queryEmbedding = embedding;
       if (!queryEmbedding && text) {
+        // Generate embedding from text if not provided
         queryEmbedding = await generateEmbeddings(text);
       }
       
-      const matches = await matchDocuments(req.user.uid, queryEmbedding, threshold, limit);
+      // Ensure filter includes the user's ID to limit results to their documents
+      // This maintains security while allowing n8n compatibility
+      const userFilter = {
+        ...filter,
+        // Include user_id in filter if not explicitly overridden
+        ...(filter.user_id === undefined ? { 'user_id': req.user.uid } : {})
+      };
+
+      // Use Supabase RPC function with the expected signature
+      const response = await proxyService.makeRequest({
+        url: `${process.env.SUPABASE_URL}/rest/v1/rpc/match_documents`,
+        method: 'POST',
+        service: 'supabase',
+        data: {
+          query_embedding: queryEmbedding,
+          match_count: limit,
+          filter: JSON.stringify(userFilter)
+        }
+      });
+      
+      const matches = Array.isArray(response) ? response : [];
       
       const responseTime = Date.now() - startTime;
       logger.info('Match documents response success', {

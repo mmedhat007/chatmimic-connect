@@ -132,11 +132,11 @@ const fetchUserConfig = async (userId) => {
 };
 
 /**
- * Create or update embedding in Supabase
- * @param {string} userId - Firebase user ID
- * @param {string} content - Content to create embedding for
- * @param {Array<number>} embedding - Embedding vector
- * @param {string} type - Type of embedding (e.g., 'rule', 'document')
+ * Save embedding for user
+ * @param {string} userId - User ID
+ * @param {string} content - Text content
+ * @param {Array<number>} embedding - Vector embedding
+ * @param {string} type - Type of embedding
  * @param {Object} metadata - Additional metadata
  * @returns {Promise<Object>} Created or updated embedding
  */
@@ -144,7 +144,15 @@ const saveEmbedding = async (userId, content, embedding, type, metadata = {}) =>
   try {
     logger.debug(`Saving embedding for user: ${userId}, type: ${type}`);
 
-    // Step 1: Delete existing embeddings for this user and type
+    // Include the type and user_id in metadata to ensure n8n compatibility
+    // This allows n8n to filter by user_id via the metadata field
+    const updatedMetadata = {
+      ...metadata,
+      embedding_type: type,
+      user_id: userId // Duplicate user_id in metadata for n8n compatibility
+    };
+
+    // Step 1: Delete existing embeddings for this user that match the type in metadata
     try {
       logger.debug(`Attempting to delete existing embedding for user: ${userId}, type: ${type}`);
       await makeRequest({
@@ -153,18 +161,16 @@ const saveEmbedding = async (userId, content, embedding, type, metadata = {}) =>
         service: 'supabase',
         params: {
           user_id: `eq.${userId}`,
-          embedding_type: `eq.${type}`
+          'metadata->>embedding_type': `eq.${type}`
         },
         headers: {
           // Prefer minimal ensures we don't get the deleted data back, slightly more efficient
-          'Prefer': 'return=minimal' 
+          'Prefer': 'return=minimal'
         }
       });
       logger.info(`Successfully deleted any existing embedding for user: ${userId}, type: ${type}`);
     } catch (deleteError) {
        // Log the error but proceed, as the INSERT might still be valid (e.g., if delete fails because nothing exists)
-       // Supabase might return 404 or other errors if the filter doesn't match, which isn't critical here.
-       // Critical errors (like auth) would likely throw higher up or during INSERT.
        logger.warn(`Warning during delete pre-check for embedding (user: ${userId}, type: ${type}): ${deleteError.message}`);
        // We don't rethrow here, we still want to attempt the insert.
     }
@@ -179,10 +185,7 @@ const saveEmbedding = async (userId, content, embedding, type, metadata = {}) =>
         user_id: userId,
         content,
         embedding,
-        embedding_type: type,
-        metadata,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        metadata: updatedMetadata
       },
       headers: {
         'Prefer': 'return=representation' // Request the inserted row back
@@ -194,7 +197,7 @@ const saveEmbedding = async (userId, content, embedding, type, metadata = {}) =>
       logger.error('Failed to create embedding or invalid response received after insert', { userId, type, response });
       throw new Error('Failed to create embedding: Invalid response from Supabase after insert');
     }
-      
+    
     logger.info('Successfully inserted new embedding in Supabase', { 
       userId,
       type,
@@ -203,7 +206,7 @@ const saveEmbedding = async (userId, content, embedding, type, metadata = {}) =>
     
     // Return the ID of the newly created embedding
     return { id: response.id, created: true };
-
+    
   } catch (error) {
     logger.error('Error in saveEmbedding process', {
       userId,

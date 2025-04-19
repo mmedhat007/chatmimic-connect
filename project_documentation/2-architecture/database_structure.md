@@ -8,6 +8,8 @@ The application uses a dual-database approach combining Firebase (Firestore) and
 
 ## 1. Firebase (Firestore)
 
+**Project ID: chatmimic-connect**
+
 Used for real-time messaging, user authentication, and WhatsApp integration.
 
 ### Collections Structure
