@@ -1,129 +1,103 @@
-# Welcome to ChatMimic Connect
+# ChatMimic Connect
 
-## Project info
+ChatMimic Connect is a powerful platform for creating and managing AI-powered WhatsApp chatbots for businesses. The platform enables seamless integration with WhatsApp Business API, Google Sheets, and advanced AI capabilities to deliver intelligent conversation experiences.
 
-**URL**: https://lovable.dev/projects/cc292d52-f917-488b-b1ce-98dfd75b5b1a
+## Key Features
+
+- **AI-Powered Chatbots**: Create custom WhatsApp agents with natural language understanding capabilities
+- **Google Sheets Integration**: Automatically collect and organize customer data in Google Sheets
+- **Lifecycle Management**: Track customer journey stages with intelligent tagging
+- **Behavior Rules**: Configure custom conversation rules and response patterns
+- **Analytics Dashboard**: Monitor conversation metrics and performance
+- **User-Friendly Interface**: Simple configuration without requiring technical expertise
 
 ## Documentation
 
-All project documentation has been consolidated into the `project_documentation` folder with a clear, organized structure. Please refer to [Project Documentation](project_documentation/README.md) for comprehensive information about:
+All project documentation is available in the `project_documentation` folder with a clear, organized structure:
 
-- Project overview and user flow
+- Project overview and user flows
 - Technical architecture and database structure 
-- API reference and backend security
-- Integrations (Google Sheets, N8N, Vector Store)
-- Deployment and production setup
-- Troubleshooting and maintenance
+- API reference and integration guides
+- Deployment and maintenance instructions
+- Troubleshooting guides
 
-## Supabase Integration
+## Data Management
 
-This project uses Supabase for storing user configurations and embeddings. Follow these steps to set up the Supabase integration:
+### Intelligent Data Collection
 
-1. Check the [Vector Store Integration Guide](project_documentation/5-integrations/vector_store_integration.md) for detailed instructions.
-2. Run the SQL scripts in the `sql/migrations` directory to set up the necessary tables and functions.
-3. Make sure your environment variables are set correctly in `.env` or `.env.local`.
-
-### Required Environment Variables
-
-```
-VITE_SUPABASE_URL=https://kutdbashpuuysxywvzgs.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-VITE_OPENAI_API_KEY=your_openai_api_key
-```
-
-### Database Tables
-
-The application uses a dual-database approach as described in the [Database Structure](project_documentation/2-architecture/database_structure.md) document.
+ChatMimic Connect can automatically extract structured data from conversations and organize it into Google Sheets. Configure exactly which data points to collect and where to store them.
 
 ### Vector Embeddings
 
-This project uses OpenAI's `text-embedding-3-small` model to create embeddings for user configurations. These embeddings are stored in Supabase for semantic search and retrieval in n8n workflows.
+The platform uses advanced embedding technology to understand conversation context and provide more relevant responses. OpenAI's `text-embedding-3-small` model powers semantic search and retrieval for automation workflows.
 
 ## Lifecycle Management
 
-### Features
+### Automated Customer Tagging
 
-#### Manual Lifecycle Override
+The application includes an intelligent lifecycle tagging system that automatically categorizes contacts based on message content and engagement patterns.
 
-The application includes an intelligent lifecycle tagging system that automatically categorizes contacts based on message content. However, when you manually set a contact's lifecycle stage through the dropdown menu, a "manual override" flag is activated. This prevents the automatic tagging system from changing the lifecycle stage until you decide to re-enable automatic tagging.
+**Manual Override Feature:**
+- Manually set a contact's lifecycle stage through the dropdown menu
+- A small "M" badge appears next to the lifecycle dropdown to indicate manual mode
+- Re-enable automatic tagging when desired
 
-**How it works:**
-- When you select a lifecycle stage from the dropdown, the contact is marked with `manually_set_lifecycle=true`
-- A small "M" badge appears next to the lifecycle dropdown to indicate manual mode is active
-- Automatic lifecycle tagging will not affect this contact until manual mode is disabled
+This feature ensures that your intentional categorizations of contacts are preserved while still benefiting from the automatic tagging system.
 
-**To re-enable automatic tagging:**
-- Open the lifecycle dropdown
-- Select "Enable Auto-Tagging" to remove the manual override flag
+## Getting Started
 
-This feature ensures that your intentional categorizations of contacts are preserved while still benefiting from the automatic tagging system when desired.
-
-## How can I edit this code?
-
-There are several ways of editing your application.
+There are several ways to work with the ChatMimic Connect codebase:
 
 **Use Lovable**
 
 Simply visit the [Lovable Project](https://lovable.dev/projects/cc292d52-f917-488b-b1ce-98dfd75b5b1a) and start prompting.
 
-Changes made via Lovable will be committed automatically to this repo.
-
 **Use your preferred IDE**
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+If you want to work locally using your own IDE, you can clone this repo and push changes:
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
+# Step 1: Clone the repository
 git clone <YOUR_GIT_URL>
 
-# Step 2: Navigate to the project directory.
+# Step 2: Navigate to the project directory
 cd <YOUR_PROJECT_NAME>
 
-# Step 3: Install the necessary dependencies.
+# Step 3: Install the necessary dependencies
 npm i
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Step 4: Start the development server
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+**Edit directly in GitHub**
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+- Navigate to the desired file(s)
+- Click the "Edit" button (pencil icon) at the top right
+- Make your changes and commit
 
 **Use GitHub Codespaces**
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+- Navigate to the main repository page
+- Click on the "Code" button near the top right
+- Select the "Codespaces" tab
+- Click on "New codespace" to launch a new environment
 
-## What technologies are used for this project?
+## Technology Stack
 
-This project is built with:
+ChatMimic Connect is built with modern technologies:
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-- Firebase (Authentication, Firestore)
-- Supabase (Vector Database)
-- OpenAI API
-- WhatsApp Business API
+- **Frontend**: React with TypeScript, Vite, Tailwind CSS, shadcn-ui
+- **Backend**: Node.js with Express
+- **Authentication**: Firebase Authentication
+- **Databases**: Firebase Firestore and Supabase Vector Database
+- **AI Services**: OpenAI API, Groq
+- **Integration**: WhatsApp Business API, Google Sheets API
 
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/cc292d52-f917-488b-b1ce-98dfd75b5b1a) and click on Share -> Publish.
+## Deployment
 
 For detailed deployment instructions, see the [Production Setup Guide](project_documentation/6-deployment/production_setup.md).
 
-## I want to use a custom domain - is that possible?
+## Custom Domain Setup
 
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)
+While custom domains aren't directly supported through the platform, you can deploy your project under your own domain using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)

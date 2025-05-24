@@ -105,8 +105,14 @@ const processSingleMessage = async (messageDoc) => {
         const userRef = admin.firestore().collection('Users').doc(uid);
         // Fetch Chat Document as well
         const chatRef = admin.firestore().collection('Whatsapp_Data').doc(uid).collection('chats').doc(contactPhoneNumber);
+        // Fetch the root Whatsapp_Data document to check for global agent settings
+        const whatsappDataRef = admin.firestore().collection('Whatsapp_Data').doc(uid);
         
-        const [userDoc, chatDoc] = await Promise.all([userRef.get(), chatRef.get()]);
+        const [userDoc, chatDoc, whatsappDataDoc] = await Promise.all([
+            userRef.get(), 
+            chatRef.get(),
+            whatsappDataRef.get()
+        ]);
 
         if (!userDoc.exists) {
             // Log error or mark processed with error?
@@ -114,8 +120,29 @@ const processSingleMessage = async (messageDoc) => {
             await markMessageProcessed(messageRef, uid, { skipped: true, reason: `User document ${uid} not found` });
             return; 
         }
+        
+        // Check if agent is globally disabled
+        if (whatsappDataDoc.exists && whatsappDataDoc.data().globalAgentDisabled === true) {
+            logger.info(`Skipping message ${messageRef.path} for user ${uid}: AI agent is globally disabled.`);
+            await markMessageProcessed(messageRef, uid, { 
+                skipped: true, 
+                reason: 'Agent is globally disabled' 
+            });
+            return;
+        }
+        
         // Chat doc might not exist if it's the very first message ever, handle this gracefully
         const chatData = chatDoc.exists ? chatDoc.data() : {}; 
+
+        // Check if agent is disabled for this specific chat
+        if (chatData.agentStatus === 'off' || chatData.humanAgent === true) {
+            logger.info(`Skipping message ${messageRef.path} for chat ${contactPhoneNumber}: AI agent is disabled for this chat.`);
+            await markMessageProcessed(messageRef, uid, { 
+                skipped: true, 
+                reason: `Agent is disabled for chat (agentStatus: ${chatData.agentStatus}, humanAgent: ${chatData.humanAgent})` 
+            });
+            return;
+        }
 
         const userData = userDoc.data();
         const sheetConfigs = userData?.workflows?.whatsapp_agent?.sheetConfigs || [];

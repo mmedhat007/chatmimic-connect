@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import GoogleSheetsButton from '../components/GoogleSheetsButton';
+import GlobalAgentToggle from '../components/GlobalAgentToggle';
 import { getCurrentUser } from '../services/firebase';
 import { doc, setDoc, collection, addDoc, getDocs, getDoc, updateDoc, query, orderBy, deleteDoc, writeBatch, collectionGroup } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -547,6 +548,12 @@ const Settings = () => {
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-medium mb-4">Google Sheets Integration</h2>
               <GoogleSheetsButton />
+            </div>
+
+            {/* Global Agent Control Section */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-medium mb-4">AI Agent Controls</h2>
+              <GlobalAgentToggle />
             </div>
 
             {/* WhatsApp Backup Import Section */}
