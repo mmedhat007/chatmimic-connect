@@ -1,19 +1,15 @@
 # Welcome to ChatMimic Connect
 
-## Project info
-
-**URL**: https://lovable.dev/projects/cc292d52-f917-488b-b1ce-98dfd75b5b1a
-
 ## Documentation
 
 All project documentation has been consolidated into the `project_documentation` folder with a clear, organized structure. Please refer to [Project Documentation](project_documentation/README.md) for comprehensive information about:
 
-- Project overview and user flow
-- Technical architecture and database structure 
-- API reference and backend security
-- Integrations (Google Sheets, N8N, Vector Store)
-- Deployment and production setup
-- Troubleshooting and maintenance
+* Project overview and user flow
+* Technical architecture and database structure
+* API reference and backend security
+* Integrations (Google Sheets, N8N, Vector Store)
+* Deployment and production setup
+* Troubleshooting and maintenance
 
 ## Supabase Integration
 
@@ -23,13 +19,6 @@ This project uses Supabase for storing user configurations and embeddings. Follo
 2. Run the SQL scripts in the `sql/migrations` directory to set up the necessary tables and functions.
 3. Make sure your environment variables are set correctly in `.env` or `.env.local`.
 
-### Required Environment Variables
-
-```
-VITE_SUPABASE_URL=https://kutdbashpuuysxywvzgs.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-VITE_OPENAI_API_KEY=your_openai_api_key
-```
 
 ### Database Tables
 
@@ -48,29 +37,25 @@ This project uses OpenAI's `text-embedding-3-small` model to create embeddings f
 The application includes an intelligent lifecycle tagging system that automatically categorizes contacts based on message content. However, when you manually set a contact's lifecycle stage through the dropdown menu, a "manual override" flag is activated. This prevents the automatic tagging system from changing the lifecycle stage until you decide to re-enable automatic tagging.
 
 **How it works:**
-- When you select a lifecycle stage from the dropdown, the contact is marked with `manually_set_lifecycle=true`
-- A small "M" badge appears next to the lifecycle dropdown to indicate manual mode is active
-- Automatic lifecycle tagging will not affect this contact until manual mode is disabled
+
+* When you select a lifecycle stage from the dropdown, the contact is marked with `manually_set_lifecycle=true`
+* A small "M" badge appears next to the lifecycle dropdown to indicate manual mode is active
+* Automatic lifecycle tagging will not affect this contact until manual mode is disabled
 
 **To re-enable automatic tagging:**
-- Open the lifecycle dropdown
-- Select "Enable Auto-Tagging" to remove the manual override flag
+
+* Open the lifecycle dropdown
+* Select "Enable Auto-Tagging" to remove the manual override flag
 
 This feature ensures that your intentional categorizations of contacts are preserved while still benefiting from the automatic tagging system when desired.
 
 ## How can I edit this code?
 
-There are several ways of editing your application.
+There are several ways to edit your application:
 
-**Use Lovable**
+### Use your preferred IDE
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/cc292d52-f917-488b-b1ce-98dfd75b5b1a) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+If you want to work locally using your own IDE, you can clone this repo and push changes.
 
 The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
 
@@ -90,40 +75,35 @@ npm i
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+### Edit a file directly in GitHub
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+* Navigate to the desired file(s).
+* Click the "Edit" button (pencil icon) at the top right of the file view.
+* Make your changes and commit the changes.
 
-**Use GitHub Codespaces**
+### Use GitHub Codespaces
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+* Navigate to the main page of your repository.
+* Click on the "Code" button (green button) near the top right.
+* Select the "Codespaces" tab.
+* Click on "New codespace" to launch a new Codespace environment.
+* Edit files directly within the Codespace and commit and push your changes once you're done.
 
 ## What technologies are used for this project?
 
 This project is built with:
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-- Firebase (Authentication, Firestore)
-- Supabase (Vector Database)
-- OpenAI API
-- WhatsApp Business API
+* Vite
+* TypeScript
+* React
+* shadcn-ui
+* Tailwind CSS
+* Firebase (Authentication, Firestore)
+* Supabase (Vector Database)
+* OpenAI API
+* WhatsApp Business API
 
 ## How can I deploy this project?
 
-Simply open [Lovable](https://lovable.dev/projects/cc292d52-f917-488b-b1ce-98dfd75b5b1a) and click on Share -> Publish.
-
 For detailed deployment instructions, see the [Production Setup Guide](project_documentation/6-deployment/production_setup.md).
 
-## I want to use a custom domain - is that possible?
-
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)
